@@ -5,10 +5,15 @@ from datetime import datetime
 
 class DataCleaner:
     def __init__(self):
+        # Campos de ayuda originales (kit_a y kit_b)
+        self.original_kit_fields = ['kit_a', 'kit_b']
+        
+        # Campos de ayuda finales
         self.aid_fields = [
             'kit_eventos', 'kit_sentencia', 'chapa_fibrocemento', 'chapa_zinc',
             'colchones', 'frazadas', 'terciadas', 'puntales', 'carpas_plasticas'
         ]
+        
         self.evento_patterns = [
             (r'ASISTENCIAS.*INUNDACION', 'INUNDACION'),
             (r'ASISTENCIAS.*SEQUIA', 'SEQUIA'),
@@ -90,7 +95,6 @@ class DataCleaner:
             'CAAGUAZU, CANINDEYU Y SAN PEDRO': 'CAAGUAZÚ',
             'CAAGUAZU, SAN PEDRO Y CANINDEYU': 'CAAGUAZÚ',
             'CAAGUAZU-GUAIRA Y SAN PEDRO': 'CAAGUAZÚ',
-
 
             # Caazapá
             'CAAZAPA': 'CAAZAPÁ',
@@ -284,7 +288,7 @@ class DataCleaner:
             'REPOSIC.MATER': 'PREPOSICIONAMIENTO', 'REPOSIC.MATER.': 'PREPOSICIONAMIENTO',
             'PROVISION DE MATERIALES': 'PREPOSICIONAMIENTO', 'REABASTECIMIENTO': 'PREPOSICIONAMIENTO',
             'REPARACION': 'PREPOSICIONAMIENTO', 'REPARACION DE BAÑADERA': 'PREPOSICIONAMIENTO',
-            'REPARACION DE OBRAS': 'PREPOSICIONAMIENTO', 'PRESTAMO': 'PREPOSICIONAMIENTO',
+            'REPARACION DE OBRES': 'PREPOSICIONAMIENTO', 'PRESTAMO': 'PREPOSICIONAMIENTO',
             'REPOSICION': 'PREPOSICIONAMIENTO', 'REPOSICION DE MATERIALES': 'PREPOSICIONAMIENTO',
             'TRASLADO INTERNO': 'PREPOSICIONAMIENTO', 'PREPOSICIONAMIENTO': 'PREPOSICIONAMIENTO',
 
@@ -299,11 +303,17 @@ class DataCleaner:
         except (ValueError, TypeError):
             return 0
 
-    def limpiar_texto(self, text):
-        """Limpia y estandariza cadenas de texto."""
-        if pd.isna(text) or text is None or str(text).strip() == '':
+    def limpiar_texto(self, texto):
+        """
+        Limpieza básica de texto: elimina espacios extra, convierte a mayúsculas
+        y maneja valores nulos o vacíos.
+        """
+        if pd.isna(texto) or texto is None:
             return 'SIN ESPECIFICAR'
-        return str(text).strip().title()
+        texto_limpio = str(texto).strip().upper()
+        if not texto_limpio: 
+            return 'SIN ESPECIFICAR'
+        return texto_limpio
 
     def limpiar_evento(self, evento_str):
         """Versión mejorada con manejo de patrones según nuevos requerimientos"""
@@ -317,7 +327,7 @@ class DataCleaner:
             estandarizado = self.estandarizacion_eventos[evento_str]
             # Eliminamos cualquier cosa que sea preposicionamiento
             if estandarizado == 'PREPOSICIONAMIENTO':
-                return None  # Indicador para eliminar el registro
+                return "ELIMINAR_REGISTRO"  # Indicador para eliminar el registro
             return estandarizado
         
         # 2. Búsqueda de patrones en textos largos
@@ -350,13 +360,29 @@ class DataCleaner:
         # 4. Si no coincide con nada, devolver OTROS
         return 'SIN EVENTO'
 
+    def procesar_kits(self, record_dict, evento_limpio):
+        """
+        Procesa los kits originales (kit_a y kit_b) y los asigna correctamente
+        a kit_eventos o kit_sentencia según el tipo de evento.
+        """
+        kit_a = self.limpiar_numero(record_dict.get('kit_a', 0))
+        kit_b = self.limpiar_numero(record_dict.get('kit_b', 0))
+        total_kits = kit_a + kit_b
+        
+        # Si el evento es C.I.D.H., asignamos a kit_sentencia
+        if evento_limpio == 'C.I.D.H.':
+            return 0, total_kits  # kit_eventos, kit_sentencia
+        else:
+            # Para cualquier otro evento, asignamos a kit_eventos
+            return total_kits, 0  # kit_eventos, kit_sentencia
+
     def post_process_eventos_with_aids(self, row):
         """Ajusta el evento basado en la presencia de ayudas según nuevos requerimientos."""
         evento = row['evento']
         
         # Si es preposicionamiento, lo eliminamos
         if evento == 'PREPOSICIONAMIENTO':
-            return None
+            return "ELIMINAR_REGISTRO"
 
         # Si no tiene evento, aplicamos las nuevas reglas
         if evento == 'SIN EVENTO':
@@ -460,8 +486,19 @@ class DataCleaner:
         """Limpia un registro completo."""
         cleaned_record = record_dict.copy()
 
-        # Limpiar campos numéricos
-        for field in self.aid_fields:
+        # Limpiar evento primero (necesario para procesar kits)
+        evento_raw = record_dict.get('evento')
+        evento_limpio = self.limpiar_evento(evento_raw)
+        cleaned_record['evento'] = evento_limpio
+
+        # Procesar kits (kit_a y kit_b) según el tipo de evento
+        kit_eventos, kit_sentencia = self.procesar_kits(record_dict, evento_limpio)
+        cleaned_record['kit_eventos'] = kit_eventos
+        cleaned_record['kit_sentencia'] = kit_sentencia
+
+        # Limpiar otros campos de ayuda
+        for field in ['chapa_fibrocemento', 'chapa_zinc', 'colchones', 
+                     'frazadas', 'terciadas', 'puntales', 'carpas_plasticas']:
             cleaned_record[field] = self.limpiar_numero(record_dict.get(field))
 
         # Limpiar distrito primero
@@ -480,7 +517,6 @@ class DataCleaner:
                 cleaned_record['distrito'] = str(departamento_raw).strip().title()
         
         # Resto de la limpieza
-        cleaned_record['evento'] = self.limpiar_evento(record_dict.get('evento'))
         cleaned_record['localidad'] = self.limpiar_texto(record_dict.get('localidad'))
 
         # Manejo de fechas

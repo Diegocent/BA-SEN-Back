@@ -54,7 +54,7 @@ def extract_and_clean_data(conn_source):
         record = dict(zip(column_names, row))
         raw_data.append(record)
     
-    cleaned_records = [cleaner.clean_record(rec) for rec in raw_data]
+    cleaned_records = [cleaner.limpiar_registro_completo(rec) for rec in raw_data]
     print(f"Se extrajeron y limpiaron {len(cleaned_records)} registros.")
     return cleaned_records
 
@@ -131,7 +131,7 @@ def load_data_to_dw(conn_dw, cleaned_records):
                 cursor.execute(
                     """
                     INSERT INTO hechos_asistencia_humanitaria (
-                        id_fecha, id_ubicacion, id_evento, kit_b_cantidad, kit_a_cantidad, chapa_fibrocemento_cantidad,
+                        id_fecha, id_ubicacion, id_evento, kit_evento, kit_sentencia, chapa_fibrocemento_cantidad,
                         chapa_zinc_cantidad, colchones_cantidad, frazadas_cantidad, terciadas_cantidad, puntales_cantidad,
                         carpas_plasticas_cantidad
                     ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
@@ -140,7 +140,7 @@ def load_data_to_dw(conn_dw, cleaned_records):
                         fecha_ids[rec['fecha']],
                         ubicacion_ids[(rec['departamento'], rec['distrito'], rec['localidad'])],
                         evento_ids[rec['evento']],
-                        rec['kit_b'], rec['kit_a'], rec['chapa_fibrocemento'], rec['chapa_zinc'],
+                        rec['kit_eventos'], rec['kit_sentencia'], rec['chapa_fibrocemento'], rec['chapa_zinc'],
                         rec['colchones'], rec['frazadas'], rec['terciadas'], rec['puntales'],
                         rec['carpas_plasticas']
                     )
