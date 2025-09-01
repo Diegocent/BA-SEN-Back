@@ -1,12 +1,26 @@
-from django.urls import path
-from . import views
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
+from .views import (
+    AsistenciaDetalladaViewSet,
+    AsistenciaAnualAPIView,
+    AsistenciaMensualAPIView,
+    AsistenciaPorUbicacionAPIView,
+    AsistenciaPorEventoAPIView,
+    EventosPorDepartamentoAPIView,
+)
+
+# El router se usa para los ViewSets
+router = DefaultRouter()
+router.register(r'detallada', AsistenciaDetalladaViewSet, basename='asistencia-detallada')
 
 urlpatterns = [
-    # URLs para los endpoints de la API
-    path('asistencias/anual/', views.api_asistencias_anual, name='api_asistencias_anual'),
-    path('asistencias/mensual/', views.api_asistencias_mensual, name='api_asistencias_mensual'),
-    path('asistencias/ubicacion/', views.api_asistencias_por_ubicacion, name='api_asistencias_por_ubicacion'),
-    path('asistencias/evento/', views.api_asistencias_por_evento, name='api_asistencias_por_evento'),
-    path('asistencias/evento_por_departamento/', views.api_eventos_por_departamento, name='api_eventos_por_departamento'),
-    path('asistencias/detallados/', views.api_registros_detallados, name='api_registros_detallados'),
+    # Rutas para el ViewSet (con paginación y filtros automáticos)
+    path('', include(router.urls)),
+
+    # Rutas para las APIViews
+    path('anual/', AsistenciaAnualAPIView.as_view(), name='asistencia-anual'),
+    path('mensual/', AsistenciaMensualAPIView.as_view(), name='asistencia-mensual'),
+    path('por-ubicacion/', AsistenciaPorUbicacionAPIView.as_view(), name='asistencia-por-ubicacion'),
+    path('por-evento/', AsistenciaPorEventoAPIView.as_view(), name='asistencia-por-evento'),
+    path('eventos-por-departamento/', EventosPorDepartamentoAPIView.as_view(), name='eventos-por-departamento'),
 ]

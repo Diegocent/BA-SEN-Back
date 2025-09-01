@@ -38,7 +38,7 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
-ROOT_URLCONF = 'mi_proyecto_data_warehouse.urls'
+ROOT_URLCONF = 'businessAnalitycsBack.urls'
 
 TEMPLATES = [
     {
@@ -56,25 +56,12 @@ TEMPLATES = [
     },
 ]
 
-WSGI_APPLICATION = 'mi_proyecto_data_warehouse.wsgi.application'
+WSGI_APPLICATION = 'businessAnalitycsBack.wsgi.application'
 
 
 # --- CONFIGURACIÓN DE BASES DE DATOS ---
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'neondb',
-        'USER': 'neondb_owner',
-        'PASSWORD': 'npg_9Hy4VLazYWfr',
-        'HOST': 'ep-hidden-cloud-a8nxbcwc-pooler.eastus2.azure.neon.tech',
-        'PORT': '5432',
-        'OPTIONS': {
-            'sslmode': 'require',
-            'channel_binding': 'require',
-        },
-        'CONN_MAX_AGE': 60, # Opcional: Para usar en conexiones persistentes
-    },
-    'data_warehouse': {
         'ENGINE': 'django.db.backends.postgresql',
         'NAME': 'data_warehouse',
         'USER': 'neondb_owner',
