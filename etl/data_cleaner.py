@@ -4,6 +4,21 @@ import re
 from datetime import datetime
 
 class DataCleaner:
+    def tiene_insumos(self, record):
+        """Devuelve True si el registro tiene al menos un insumo mayor a 0 (maneja None y valores no numéricos)."""
+        insumo_fields = self.original_kit_fields + [
+            'chapa_fibrocemento', 'chapa_zinc', 'colchones', 'frazadas', 'terciadas', 'puntales', 'carpas_plasticas'
+        ]
+        for field in insumo_fields:
+            valor = record.get(field, 0)
+            if valor is None:
+                valor = 0
+            try:
+                if float(valor) > 0:
+                    return True
+            except Exception:
+                continue
+        return False
     def __init__(self):
         # Campos de ayuda originales (kit_a y kit_b)
         self.original_kit_fields = ['kit_a', 'kit_b']
@@ -445,25 +460,27 @@ class DataCleaner:
         if distrito_str is None:
             distrito_str = ''
 
-        depto_raw = str(departamento_str).strip()
 
-        # 1. Primero: estandarizar usando el diccionario
+        depto_raw = str(departamento_str).strip()
         depto_upper = depto_raw.upper()
+
+        # 1. Primero: estandarizar usando el diccionario (siempre buscar en mayúsculas)
         if depto_upper in self.estandarizacion_dept:
             depto_std = self.estandarizacion_dept[depto_upper]
         else:
-            depto_std = depto_raw
+            # Si la clave no está, intentar buscar la versión capitalizada (por si acaso)
+            depto_std = self.estandarizacion_dept.get(depto_raw.upper(), depto_upper)
 
         # 2. Verificar si es un caso especial (VARIOS, SIN_DEPARTAMENTO, etc.)
-        # Nota: ahora usamos el valor estandarizado
         if depto_std in ['VARIOS DEPARTAMENTOS', 'INDI', 'VARIOS']:
             return 'CENTRAL'
-
         if depto_std == 'SIN_DEPARTAMENTO':
             return 'CENTRAL'
 
-        # 3. Corregir si el departamento es en realidad un distrito
-        depto_std, distrito_str = self.corregir_distrito_como_departamento(depto_std, distrito_str)
+        # 3. Corregir si el departamento es en realidad un distrito (siempre que sea un distrito conocido)
+        # Esto se hace siempre, no solo si el distrito está vacío
+        if depto_std.upper() in self.distrito_a_departamento:
+            depto_std = self.distrito_a_departamento[depto_std.upper()]
 
         # 4. Separadores: quedarnos con la primera parte
         separators = [' - ', ' / ', ', ', ' Y ']
@@ -503,21 +520,36 @@ class DataCleaner:
 
         # Limpiar distrito primero
         cleaned_record['distrito'] = self.limpiar_texto(record_dict.get('distrito'))
-        
+
         # Limpiar departamento
         departamento_raw = record_dict.get('departamento')
         distrito_raw = cleaned_record['distrito']
-        
+
+        # Detectar si el departamento es un distrito conocido
+        dep_upper = str(departamento_raw).strip().upper() if departamento_raw else ''
+        es_distrito_conocido = dep_upper in self.distrito_a_departamento
+
+        # Si el departamento es un distrito conocido y el campo distrito ya tiene valor, mover distrito a localidad
+        if es_distrito_conocido and cleaned_record['distrito'] and cleaned_record['distrito'] != 'SIN_ESPECIFICAR':
+            # Guardar el valor anterior de distrito en localidad (si localidad ya tiene valor, concatenar)
+            localidad_ant = self.limpiar_texto(record_dict.get('localidad'))
+            if localidad_ant and localidad_ant != 'SIN_ESPECIFICAR':
+                cleaned_record['localidad'] = f"{cleaned_record['distrito'].title()} / {localidad_ant.title()}"
+            else:
+                cleaned_record['localidad'] = cleaned_record['distrito'].title()
+            # Poner el distrito corregido
+            cleaned_record['distrito'] = str(departamento_raw).strip().title()
+        else:
+            # Resto de la limpieza de localidad
+            cleaned_record['localidad'] = self.limpiar_texto(record_dict.get('localidad'))
+
+        # Limpiar departamento (después de la lógica de localidad/distrito)
         cleaned_record['departamento'] = self.limpiar_departamento(departamento_raw, distrito_raw)
-        
+
         # Si el distrito está vacío pero el departamento es un distrito conocido
-        if (not cleaned_record['distrito'] or cleaned_record['distrito'] == 'SIN ESPECIFICAR'):
-            dep_upper = str(departamento_raw).strip().upper() if departamento_raw else ''
-            if dep_upper in self.distrito_a_departamento:
+        if (not cleaned_record['distrito'] or cleaned_record['distrito'] == 'SIN_ESPECIFICAR'):
+            if es_distrito_conocido:
                 cleaned_record['distrito'] = str(departamento_raw).strip().title()
-        
-        # Resto de la limpieza
-        cleaned_record['localidad'] = self.limpiar_texto(record_dict.get('localidad'))
 
         # Manejo de fechas
         fecha_raw = record_dict.get('fecha')
