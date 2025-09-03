@@ -25,10 +25,12 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'corsheaders',  # <--- Agregado para CORS
     'api', # Asegúrate de que tu aplicación 'api' esté aquí
 ]
 
 MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware',  # <--- Agregado para CORS (debe ir arriba)
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -36,6 +38,13 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+]
+# --- Configuración de CORS ---
+CORS_ALLOWED_ORIGINS = [
+    "http://192.168.100.101",
+    "http://192.168.100.101:3000",
+    "http://192.168.100.101:5173",
+    "http://localhost:5173",
 ]
 
 ROOT_URLCONF = 'businessAnalitycsBack.urls'

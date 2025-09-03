@@ -550,28 +550,27 @@ class ResumenPorDepartamentoAPIView(generics.ListAPIView):
         queryset = HechosAsistenciaHumanitaria.objects.values(
             departamento=F('id_ubicacion__departamento')
         ).annotate(
-            total_kits=Sum('kit_sentencia_cantidad') + Sum('kit_evento_cantidad'),
+            total_kits=Sum('kit_sentencia') + Sum('kit_evento'),
             total_chapas=Sum('chapa_fibrocemento_cantidad') + Sum('chapa_zinc_cantidad'),
             cantidad_registros=Count('id_asistencia_hum')
         ).order_by('-cantidad_registros')
 
-        # Para el evento más frecuente, necesitamos una consulta separada
-        # que agrupe por departamento y evento, y luego obtenga el top 1
-        subquery_frecuencia = HechosAsistenciaHumanitaria.objects.values(
-            'id_ubicacion__departamento'
+        # Para el evento más frecuente, agrupamos por departamento y evento, y contamos
+        eventos = HechosAsistenciaHumanitaria.objects.values(
+            'id_ubicacion__departamento', 'id_evento__evento'
         ).annotate(
-            evento=F('id_evento__evento'),
             evento_count=Count('id_evento')
-        ).order_by('-evento_count', 'id_ubicacion__departamento').distinct('id_ubicacion__departamento')
+        ).order_by('id_ubicacion__departamento', '-evento_count')
 
-        # Crea un diccionario para un mapeo rápido de departamento a evento más frecuente
-        mapa_eventos = {
-            item['id_ubicacion__departamento']: item['evento'] 
-            for item in subquery_frecuencia
-        }
+        # Diccionario para guardar el evento más frecuente por departamento
+        mapa_eventos = {}
+        for e in eventos:
+            depto = e['id_ubicacion__departamento']
+            if depto not in mapa_eventos:
+                mapa_eventos[depto] = e['id_evento__evento']
 
         # Añade la columna 'evento_mas_frecuente' a nuestro queryset principal
         for item in queryset:
             item['evento_mas_frecuente'] = mapa_eventos.get(item['departamento'], 'N/A')
-            
+
         return queryset
