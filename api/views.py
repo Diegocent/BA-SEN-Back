@@ -156,7 +156,8 @@ class AsistenciaPorDepartamentoAPIView(generics.ListAPIView):
             departamento=F('id_ubicacion__departamento'),
             kit_sentencia=Sum('kit_sentencia'),
             kit_evento=Sum('kit_evento'),
-            chapas=Sum(F('chapa_fibrocemento_cantidad') + F('chapa_zinc_cantidad'))
+            chapas=Sum(F('chapa_fibrocemento_cantidad') + F('chapa_zinc_cantidad')),
+            carpas=Sum('carpas_plasticas_cantidad')
         ).order_by('id_ubicacion__departamento')
 
         departamento_param = self.request.query_params.get('departamento')
@@ -190,6 +191,8 @@ class EventosPorDepartamentoAPIView(generics.ListAPIView):
     
     def get_queryset(self):
         queryset = HechosAsistenciaHumanitaria.objects.exclude(id_evento__evento='ELIMINAR_REGISTRO').values('id_ubicacion__departamento', 'id_evento__evento').annotate(
+            evento=F('id_evento__evento'),
+            departamento=F('id_ubicacion__departamento'),
             kit_sentencia=Sum('kit_sentencia'),
             kit_evento=Sum('kit_evento'),
             chapas=Sum(F('chapa_fibrocemento_cantidad') + F('chapa_zinc_cantidad'))
@@ -205,7 +208,7 @@ class EventosPorDepartamentoAPIView(generics.ListAPIView):
                 Q(id_ubicacion__departamento__icontains=input_busqueda) |
                 Q(id_evento__evento__icontains=input_busqueda)
             )
-
+        
         return queryset
 
 @api_view(['GET'])
@@ -226,29 +229,7 @@ def total_asistencia(request):
 
 # --- SECCION DE LOS GRAFICOS ---
 
-# Geográfico
-class AsistenciaPorDepartamentoAPIView(generics.ListAPIView):
-    """
-    Endpoint para la distribución de asistencias por departamento.
-    Devuelve el departamento y las cantidades distribuidas.
-    """
-    serializer_class = TotalAyudasSerializer
-
-    def get_queryset(self):
-        queryset = HechosAsistenciaHumanitaria.objects.values(
-            departamento=F('id_ubicacion__departamento')
-        )
-        start_date = self.request.query_params.get('start_date')
-        end_date = self.request.query_params.get('end_date')
-        if start_date and end_date:
-            try:
-                
-                start_date_obj = datetime.strptime(start_date, '%Y-%m-%d').date()
-                end_date_obj = datetime.strptime(end_date, '%Y-%m-%d').date()
-                queryset = queryset.filter(id_fecha__fecha__range=(start_date_obj, end_date_obj))
-            except ValueError:
-                return queryset.none()
-        return _annotate_total_ayudas(queryset).order_by('departamento')
+## Eliminada la definición duplicada de AsistenciaPorDepartamentoAPIView para evitar conflictos y asegurar paginación
 
 class EventosPorLocalidadAPIView(generics.ListAPIView):
     """
