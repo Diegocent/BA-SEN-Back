@@ -9,7 +9,7 @@ class DimFechaSerializer(serializers.ModelSerializer):
 class DimUbicacionSerializer(serializers.ModelSerializer):
     class Meta:
         model = DimUbicacion
-        fields = ['departamento', 'distrito', 'localidad']
+        fields = ['departamento', 'distrito', 'localidad', 'orden']
 
 class DimEventoSerializer(serializers.ModelSerializer):
     class Meta:
@@ -39,6 +39,7 @@ class TotalAyudasSerializer(serializers.Serializer):
     mes = serializers.IntegerField(required=False)
     nombre_mes = serializers.CharField(required=False, max_length=20)
     departamento = serializers.CharField(required=False, max_length=50)
+    orden = serializers.IntegerField(required=False)
     distrito = serializers.CharField(required=False, max_length=50)
     evento = serializers.CharField(required=False, max_length=50)
     tipoEvento = serializers.CharField(required=False, max_length=50)

@@ -152,13 +152,14 @@ class AsistenciaPorDepartamentoAPIView(generics.ListAPIView):
     pagination_class = StandardResultsSetPagination
 
     def get_queryset(self):
-        queryset = HechosAsistenciaHumanitaria.objects.exclude(id_evento__evento='ELIMINAR_REGISTRO').values('id_ubicacion__departamento').annotate(
+        queryset = HechosAsistenciaHumanitaria.objects.exclude(id_evento__evento='ELIMINAR_REGISTRO').values('id_ubicacion__departamento', 'id_ubicacion__orden').annotate(
             departamento=F('id_ubicacion__departamento'),
+            orden=F('id_ubicacion__orden'),
             kit_sentencia=Sum('kit_sentencia'),
             kit_evento=Sum('kit_evento'),
             chapas=Sum(F('chapa_fibrocemento_cantidad') + F('chapa_zinc_cantidad')),
             carpas=Sum('carpas_plasticas_cantidad')
-        ).order_by('id_ubicacion__departamento')
+        ).order_by('id_ubicacion__orden', 'id_ubicacion__departamento')
 
         departamento_param = self.request.query_params.get('departamento')
         if departamento_param:

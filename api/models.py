@@ -17,6 +17,7 @@ class DimUbicacion(models.Model):
     departamento = models.TextField(db_column='departamento')
     distrito = models.TextField(db_column='distrito')
     localidad = models.TextField(db_column='localidad')
+    orden = models.IntegerField(db_column='orden')
 
     class Meta:
         db_table = 'dim_ubicacion'

@@ -38,6 +38,28 @@ class DataCleaner:
             (r'OPERATIVO', 'OPERATIVO JAHO\'I'),
         ]
 
+        # Orden explícito de departamentos (1-18)
+        self.departamento_orden = {
+            'CONCEPCIÓN': 1,
+            'SAN PEDRO': 2,
+            'CORDILLERA': 3,
+            'GUAIRÁ': 4,
+            'CAAGUAZÚ': 5,
+            'CAAZAPÁ': 6,
+            'ITAPÚA': 7,
+            'MISIONES': 8,
+            'PARAGUARÍ': 9,
+            'ALTO PARANÁ': 10,
+            'CENTRAL': 11,
+            'ÑEEMBUCÚ': 12,
+            'AMAMBAY': 13,
+            'CANINDEYÚ': 14,
+            'PDTE. HAYES': 15,
+            'BOQUERON': 16,
+            'ALTO PARAGUAY': 17,
+            'CAPITAL': 18
+        }
+
         # Mapeo de distritos a sus departamentos correspondientes
         self.distrito_a_departamento = {
             'ASUNCIÓN': 'CAPITAL',
@@ -571,6 +593,10 @@ class DataCleaner:
 
         # Limpiar departamento (después de la lógica de localidad/distrito)
         cleaned_record['departamento'] = self.limpiar_departamento(departamento_raw, distrito_raw)
+
+        # Asignar el orden del departamento (si corresponde)
+        depto_orden = self.departamento_orden.get(cleaned_record['departamento'].upper())
+        cleaned_record['orden_departamento'] = depto_orden if depto_orden is not None else None
 
         # Si el distrito está vacío pero el departamento es un distrito conocido
         if (not cleaned_record['distrito'] or cleaned_record['distrito'] == 'SIN_ESPECIFICAR'):
