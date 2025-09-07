@@ -244,9 +244,39 @@ class DataCleaner:
             'INCEND. DOMIC.': 'INCENDIO', 'INCENDIO DOMICILIARIO': 'INCENDIO',
             'DERRUMBE': 'INCENDIO', 'INCENDIO FORESTAL': 'INCENDIO',
 
+
             # TORMENTA SEVERA
-            'EVENTO CLIMATICO': 'TORMENTA SEVERA', 'TORMENTA SEVERA CENTRAL': 'TORMENTA SEVERA',
-            'EVENTO CLIMATICO TEMPORAL': 'TORMENTA SEVERA', 'MUNICIPALIDAD': 'TORMENTA SEVERA',
+            'EVENTO CLIMATICO': 'TORMENTA SEVERA',
+            'TORMENTA SEVERA CENTRAL': 'TORMENTA SEVERA',
+            'EVENTO CLIMATICO TEMPORAL': 'TORMENTA SEVERA',
+            'MUNICIPALIDAD': 'TORMENTA SEVERA',
+            'TEMPORAL': 'TORMENTA SEVERA',
+            'TEMPORAL CENTRAL': 'TORMENTA SEVERA',
+            'TEMPORAL - MUNICIPALIDAD': 'TORMENTA SEVERA',
+            'TEMPORAL-GOBERNACION': 'TORMENTA SEVERA',
+            'TEMPORAL - GOBERNACION': 'TORMENTA SEVERA',
+            'TEMPORAL-GOBERNACIÓN': 'TORMENTA SEVERA',
+            'TEMPORAL - GOBERNACIÓN': 'TORMENTA SEVERA',
+            'TEMPORAL CENTRAL MUNICIPALIDAD': 'TORMENTA SEVERA',
+            'TEMPORAL MUNICIPALIDAD': 'TORMENTA SEVERA',
+            'TEMPORAL - COMPLEMENTOEXP. 078/19': 'TORMENTA SEVERA',
+            'ASISTENCIA TEMPORAL': 'TORMENTA SEVERA',
+            'ASISTENCIA - TEMPORAL': 'TORMENTA SEVERA',
+            'TEMPORAL - CAMARA DE DIPUTADOS': 'TORMENTA SEVERA',
+            'TEMPORAL - COMISION VECINAL': 'TORMENTA SEVERA',
+            'TEMPORAL - ASENTAMIENTO 8 DE DICIEMBRE': 'TORMENTA SEVERA',
+            'TEMPORAL - OLLA POPULAR': 'TORMENTA SEVERA',
+            'TEMPORAL CENTRAL  MUNICIPALIDAD': 'TORMENTA SEVERA',
+            'TEMPORAL  CENTRAL': 'TORMENTA SEVERA',
+            'TEMPORAL  - MUNICIPALIDAD': 'TORMENTA SEVERA',
+            'TEMPORAL  - GOBERNACION': 'TORMENTA SEVERA',
+            'TEMPORAL  - GOBERNACIÓN': 'TORMENTA SEVERA',
+            'TEMPORAL  MUNICIPALIDAD': 'TORMENTA SEVERA',
+            'TEMPORAL  - COMPLEMENTOEXP. 078/19': 'TORMENTA SEVERA',
+            'TEMPORAL  - CAMARA DE DIPUTADOS': 'TORMENTA SEVERA',
+            'TEMPORAL  - COMISION VECINAL': 'TORMENTA SEVERA',
+            'TEMPORAL  - ASENTAMIENTO 8 DE DICIEMBRE': 'TORMENTA SEVERA',
+            'TEMPORAL  - OLLA POPULAR': 'TORMENTA SEVERA',
 
             # SEQUIA
             'SEQ. E INUND.': 'SEQUIA', 'SEQ./INUND.': 'SEQUIA', 'SEQUIA-INUND.': 'SEQUIA',
@@ -394,31 +424,30 @@ class DataCleaner:
     def post_process_eventos_with_aids(self, row):
         """Ajusta el evento basado en la presencia de ayudas según nuevos requerimientos."""
         evento = row['evento']
-        
+
         # Si es preposicionamiento, lo eliminamos
         if evento == 'PREPOSICIONAMIENTO':
             return "ELIMINAR_REGISTRO"
 
         # Si no tiene evento, aplicamos las nuevas reglas
         if evento == 'SIN EVENTO':
-            # Verificamos si es Boqueron, Alto Paraguay o PDTE. HAYES -> SEQUIA
             departamento = row.get('departamento', '').upper()
+            # Si tiene chapa_zinc > 0, es TORMENTA SEVERA
+            if row.get('chapa_zinc', 0) > 0:
+                return 'TORMENTA SEVERA'
+            # Verificamos si es Boqueron, Alto Paraguay o PDTE. HAYES -> SEQUIA
             if departamento in ['BOQUERON', 'ALTO PARAGUAY', 'PDTE. HAYES']:
                 return 'SEQUIA'
-            
             # Verificamos si tiene kits -> EXTREMA VULNERABILIDAD
             if (row.get('kit_sentencia', 0) > 0 or row.get('kit_eventos', 0) > 0):
                 return 'EXTREMA VULNERABILIDAD'
-            
             # Verificamos si tiene viveres <10 con materiales -> INCENDIO
-            # Asumimos que 'viveres' es otro campo de ayuda (si no existe, deberías agregarlo)
             viveres = row.get('viveres', 0)
             materiales = sum(row.get(field, 0) for field in ['chapa_fibrocemento', 'chapa_zinc', 
                                                            'colchones', 'frazadas', 'terciadas', 
                                                            'puntales', 'carpas_plasticas'])
             if viveres > 0 and viveres < 10 and materiales > 0:
                 return 'INCENDIO'
-            
             # Verificamos si tiene viveres y es de 2020 o 2021 -> OLLA POPULAR
             fecha = row.get('fecha')
             if fecha and viveres > 0:
@@ -428,14 +457,11 @@ class DataCleaner:
                         return 'OLLA POPULAR'
                 except:
                     pass
-            
             # Verificamos si es CAPITAL y solo tiene viveres -> INUNDACION
             if departamento == 'CAPITAL' and viveres > 0 and materiales == 0:
                 return 'INUNDACION'
-            
-            # Si no cumple ninguna regla, dejamos SIN EVENTO
+            # Si no cumple ninguna regla, dejamos EXTREMA VULNERABILIDAD
             return 'EXTREMA VULNERABILIDAD'
-        
         return evento
 
     def corregir_distrito_como_departamento(self, departamento, distrito):
