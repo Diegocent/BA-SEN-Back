@@ -9,6 +9,9 @@ import logging
 from datetime import datetime
 from rest_framework.views import APIView
 from .serializers import ResumenGeneralSerializer
+import django_filters
+from rest_framework.filters import OrderingFilter
+from django_filters.rest_framework import DjangoFilterBackend
 
 # Configurar logging para ver las consultas
 # logging.basicConfig(level=logging.DEBUG)
@@ -42,6 +45,22 @@ def _annotate_total_ayudas(queryset):
             F('terciadas_cantidad') + F('puntales_cantidad') +
             F('carpas_plasticas_cantidad')
     )
+class HechosAsistenciaHumanitariaFilterSet(django_filters.FilterSet):
+    """
+    Conjunto de filtros para el modelo HechosAsistenciaHumanitaria.
+    """
+    departamento = django_filters.CharFilter(field_name='id_ubicacion__departamento', lookup_expr='icontains')
+    distrito = django_filters.CharFilter(field_name='id_ubicacion__distrito', lookup_expr='icontains')
+    localidad = django_filters.CharFilter(field_name='id_ubicacion__localidad', lookup_expr='icontains')
+    evento = django_filters.CharFilter(field_name='id_evento__evento', lookup_expr='icontains')
+    anio = django_filters.NumberFilter(field_name='id_fecha__anio')
+    mes = django_filters.NumberFilter(field_name='id_fecha__mes')
+    fecha_desde = django_filters.DateFilter(field_name='id_fecha__fecha', lookup_expr='gte')
+    fecha_hasta = django_filters.DateFilter(field_name='id_fecha__fecha', lookup_expr='lte')
+
+    class Meta:
+        model = HechosAsistenciaHumanitaria
+        fields = '__all__'
 class AsistenciaDetalladaViewSet(viewsets.ReadOnlyModelViewSet):
     """
     Vista que devuelve el detalle de los registros, incluyendo la ubicación,
@@ -50,26 +69,13 @@ class AsistenciaDetalladaViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = HechosAsistenciaHumanitaria.objects.all().select_related('id_fecha', 'id_ubicacion', 'id_evento')
     serializer_class = HechosAsistenciaHumanitariaSerializer
     pagination_class = StandardResultsSetPagination
+    filter_backends = [DjangoFilterBackend]
+    filterset_class = HechosAsistenciaHumanitariaFilterSet
 
     def get_queryset(self):
         queryset = super().get_queryset()
-        
-        # Filtros específicos
-        departamento = self.request.query_params.get('departamento')
-        distrito = self.request.query_params.get('distrito')
-        evento = self.request.query_params.get('evento')
-        localidad = self.request.query_params.get('localidad')
-        
-        if departamento:
-            queryset = queryset.filter(id_ubicacion__departamento__icontains=departamento)
-        if distrito:
-            queryset = queryset.filter(id_ubicacion__distrito__icontains=distrito)
-        if evento:
-            queryset = queryset.filter(id_evento__evento__icontains=evento)
-        if localidad:
-            queryset = queryset.filter(id_ubicacion__localidad__icontains=localidad)
-        
-        # Búsqueda general
+        # ...existing code...
+        # Si quieres mantener la búsqueda general, puedes dejar este bloque:
         input_busqueda = self.request.query_params.get('inputBusqueda')
         if input_busqueda:
             queryset = queryset.filter(
@@ -78,7 +84,6 @@ class AsistenciaDetalladaViewSet(viewsets.ReadOnlyModelViewSet):
                 Q(id_ubicacion__localidad__icontains=input_busqueda) |
                 Q(id_evento__evento__icontains=input_busqueda)
             )
-            
         return queryset.order_by('-id_fecha__fecha')
 
 class AsistenciaAnualAPIView(generics.ListAPIView):
@@ -87,6 +92,8 @@ class AsistenciaAnualAPIView(generics.ListAPIView):
     """
     serializer_class = TotalAyudasSerializer
     pagination_class = StandardResultsSetPagination
+    filter_backends = [DjangoFilterBackend]
+    filterset_class = HechosAsistenciaHumanitariaFilterSet
 
     def get_queryset(self):
         return HechosAsistenciaHumanitaria.objects.exclude(id_evento__evento='ELIMINAR_REGISTRO').values('id_fecha__anio').annotate(
@@ -102,6 +109,8 @@ class AsistenciaMensualAPIView(generics.ListAPIView):
     """
     serializer_class = TotalAyudasSerializer
     pagination_class = StandardResultsSetPagination
+    filter_backends = [DjangoFilterBackend]
+    filterset_class = HechosAsistenciaHumanitariaFilterSet
 
     def get_queryset(self):
         queryset = HechosAsistenciaHumanitaria.objects.exclude(id_evento__evento='ELIMINAR_REGISTRO').values('id_fecha__anio', 'id_fecha__mes', 'id_fecha__nombre_mes').annotate(
@@ -113,10 +122,6 @@ class AsistenciaMensualAPIView(generics.ListAPIView):
             chapas=Sum(F('chapa_fibrocemento_cantidad') + F('chapa_zinc_cantidad'))
         ).order_by('id_fecha__anio', 'id_fecha__mes')
         
-        anio_param = self.request.query_params.get('anio')
-        if anio_param:
-            queryset = queryset.filter(id_fecha__anio=anio_param)
-
         return queryset
     
 class AsistenciaPorUbicacionAPIView(generics.ListAPIView):
@@ -125,6 +130,8 @@ class AsistenciaPorUbicacionAPIView(generics.ListAPIView):
     """
     serializer_class = TotalAyudasSerializer
     pagination_class = StandardResultsSetPagination
+    filter_backends = [DjangoFilterBackend]
+    filterset_class = HechosAsistenciaHumanitariaFilterSet
 
     def get_queryset(self):
         queryset = HechosAsistenciaHumanitaria.objects.exclude(id_evento__evento='ELIMINAR_REGISTRO').values('id_ubicacion__departamento', 'id_ubicacion__distrito').annotate(
@@ -135,14 +142,6 @@ class AsistenciaPorUbicacionAPIView(generics.ListAPIView):
             chapas=Sum(F('chapa_fibrocemento_cantidad') + F('chapa_zinc_cantidad'))
         ).order_by('id_ubicacion__departamento', 'id_ubicacion__distrito')
         
-        departamento_param = self.request.query_params.get('departamento')
-        if departamento_param:
-            queryset = queryset.filter(id_ubicacion__departamento__icontains=departamento_param)
-        
-        distrito_param = self.request.query_params.get('distrito')
-        if distrito_param:
-            queryset = queryset.filter(id_ubicacion__distrito__icontains=distrito_param)
-
         return queryset
 class AsistenciaPorDepartamentoAPIView(generics.ListAPIView):
     """
@@ -150,6 +149,8 @@ class AsistenciaPorDepartamentoAPIView(generics.ListAPIView):
     """
     serializer_class = TotalAyudasSerializer
     pagination_class = StandardResultsSetPagination
+    filter_backends = [DjangoFilterBackend]
+    filterset_class = HechosAsistenciaHumanitariaFilterSet
 
     def get_queryset(self):
         queryset = HechosAsistenciaHumanitaria.objects.exclude(id_evento__evento='ELIMINAR_REGISTRO').values('id_ubicacion__departamento', 'id_ubicacion__orden').annotate(
@@ -161,10 +162,6 @@ class AsistenciaPorDepartamentoAPIView(generics.ListAPIView):
             carpas=Sum('carpas_plasticas_cantidad')
         ).order_by('id_ubicacion__orden', 'id_ubicacion__departamento')
 
-        departamento_param = self.request.query_params.get('departamento')
-        if departamento_param:
-            queryset = queryset.filter(id_ubicacion__departamento__icontains=departamento_param)
-
         return queryset
 class AsistenciaPorEventoAPIView(generics.ListAPIView):
     """
@@ -172,6 +169,8 @@ class AsistenciaPorEventoAPIView(generics.ListAPIView):
     """
     serializer_class = TotalAyudasSerializer
     pagination_class = StandardResultsSetPagination
+    filter_backends = [DjangoFilterBackend]
+    filterset_class = HechosAsistenciaHumanitariaFilterSet
 
     def get_queryset(self):
         return HechosAsistenciaHumanitaria.objects.exclude(id_evento__evento='ELIMINAR_REGISTRO').values(
@@ -189,6 +188,8 @@ class EventosPorDepartamentoAPIView(generics.ListAPIView):
     """
     serializer_class = TotalAyudasSerializer
     pagination_class = StandardResultsSetPagination
+    filter_backends = [DjangoFilterBackend]
+    filterset_class = HechosAsistenciaHumanitariaFilterSet
     
     def get_queryset(self):
         queryset = HechosAsistenciaHumanitaria.objects.exclude(id_evento__evento='ELIMINAR_REGISTRO').values('id_ubicacion__departamento', 'id_evento__evento').annotate(
@@ -199,17 +200,12 @@ class EventosPorDepartamentoAPIView(generics.ListAPIView):
             chapas=Sum(F('chapa_fibrocemento_cantidad') + F('chapa_zinc_cantidad'))
         ).order_by('id_ubicacion__departamento', 'id_evento__evento')
         
-        departamento_param = self.request.query_params.get('departamento')
-        if departamento_param:
-            queryset = queryset.filter(id_ubicacion__departamento__icontains=departamento_param)
-            
         input_busqueda = self.request.query_params.get('inputBusqueda')
         if input_busqueda:
             queryset = queryset.filter(
                 Q(id_ubicacion__departamento__icontains=input_busqueda) |
                 Q(id_evento__evento__icontains=input_busqueda)
             )
-        
         return queryset
 
 @api_view(['GET'])
