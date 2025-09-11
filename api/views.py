@@ -57,6 +57,30 @@ class HechosAsistenciaHumanitariaFilterSet(django_filters.FilterSet):
     mes = django_filters.NumberFilter(field_name='id_fecha__mes')
     fecha_desde = django_filters.DateFilter(field_name='id_fecha__fecha', lookup_expr='gte')
     fecha_hasta = django_filters.DateFilter(field_name='id_fecha__fecha', lookup_expr='lte')
+    chapas = django_filters.NumberFilter(method='filter_chapas')
+    numeroOcurrencias = django_filters.NumberFilter(method='filter_numero_ocurrencias')
+
+    def filter_chapas(self, queryset, name, value):
+        # Si el queryset ya tiene 'chapas' anotado, filtra directo
+        annotations = getattr(queryset, 'query', None)
+        if annotations and hasattr(annotations, 'annotations') and 'chapas' in annotations.annotations:
+            return queryset.filter(chapas=value)
+        # Si no, anota y filtra
+        queryset = queryset.annotate(
+            chapas=F('chapa_fibrocemento_cantidad') + F('chapa_zinc_cantidad')
+        )
+        return queryset.filter(chapas=value)
+
+    def filter_numero_ocurrencias(self, queryset, name, value):
+        # Si el queryset ya tiene 'numeroOcurrencias' anotado, filtra directo
+        annotations = getattr(queryset, 'query', None)
+        if annotations and hasattr(annotations, 'annotations') and 'numeroOcurrencias' in annotations.annotations:
+            return queryset.filter(numeroOcurrencias=value)
+        # Si no, anota y filtra (solo tiene sentido en vistas que agregan Count)
+        queryset = queryset.annotate(
+            numeroOcurrencias=Count('id_evento')
+        )
+        return queryset.filter(numeroOcurrencias=value)
 
     class Meta:
         model = HechosAsistenciaHumanitaria
