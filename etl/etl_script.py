@@ -54,8 +54,14 @@ def extract_and_clean_data(conn_source):
         record = dict(zip(column_names, row))
         raw_data.append(record)
     
-    cleaned_records = [cleaner.limpiar_registro_completo(rec) for rec in raw_data]
-    print(f"Se extrajeron y limpiaron {len(cleaned_records)} registros.")
+    # Limpiar y filtrar registros
+    cleaned_records = []
+    for rec in raw_data:
+        cleaned = cleaner.limpiar_registro_completo(rec)
+        # Filtrar: solo registros con insumos y que no sean ELIMINAR_REGISTRO
+        if cleaned['evento'] != 'ELIMINAR_REGISTRO' and cleaner.tiene_insumos(cleaned):
+            cleaned_records.append(cleaned)
+    print(f"Se extrajeron, limpiaron y filtraron {len(cleaned_records)} registros válidos.")
     return cleaned_records
 
 # --- Lógica de Carga (Load) ---
@@ -74,12 +80,21 @@ def load_data_to_dw(conn_dw, cleaned_records):
     fecha_ids = {}
     for fecha_obj in sorted(list(unique_fechas)):
         fecha_str = fecha_obj.strftime('%Y-%m-%d')
-        cursor.execute(f"SELECT id_fecha FROM dim_fecha WHERE fecha = '{fecha_str}';")
+        
+        # Uso de consulta parametrizada para prevenir inyección SQL
+        cursor.execute("SELECT id_fecha FROM dim_fecha WHERE fecha = %s;", (fecha_str,))
         result = cursor.fetchone()
+        
         if not result:
+            nombres_meses = {
+                1: 'Enero', 2: 'Febrero', 3: 'Marzo', 4: 'Abril', 5: 'Mayo', 6: 'Junio',
+                7: 'Julio', 8: 'Agosto', 9: 'Septiembre', 10: 'Octubre', 11: 'Noviembre', 12: 'Diciembre'
+            }
+            nombre_mes_espanol = nombres_meses.get(fecha_obj.month)
+            
             cursor.execute(
                 "INSERT INTO dim_fecha (fecha, anio, mes, nombre_mes, dia_del_mes) VALUES (%s, %s, %s, %s, %s) RETURNING id_fecha;",
-                (fecha_obj, fecha_obj.year, fecha_obj.month, fecha_obj.strftime('%B'), fecha_obj.day)
+                (fecha_obj, fecha_obj.year, fecha_obj.month, nombre_mes_espanol, fecha_obj.day)
             )
             fecha_ids[fecha_obj] = cursor.fetchone()[0]
         else:

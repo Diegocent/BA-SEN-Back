@@ -4,6 +4,21 @@ import re
 from datetime import datetime
 
 class DataCleaner:
+    def tiene_insumos(self, record):
+        """Devuelve True si el registro tiene al menos un insumo mayor a 0 (maneja None y valores no numéricos)."""
+        insumo_fields = self.original_kit_fields + [
+            'chapa_fibrocemento', 'chapa_zinc', 'colchones', 'frazadas', 'terciadas', 'puntales', 'carpas_plasticas'
+        ]
+        for field in insumo_fields:
+            valor = record.get(field, 0)
+            if valor is None:
+                valor = 0
+            try:
+                if float(valor) > 0:
+                    return True
+            except Exception:
+                continue
+        return False
     def __init__(self):
         # Campos de ayuda originales (kit_a y kit_b)
         self.original_kit_fields = ['kit_a', 'kit_b']
@@ -22,6 +37,28 @@ class DataCleaner:
             (r'EVENTO CLIMATICO', 'TORMENTA SEVERA'),
             (r'OPERATIVO', 'OPERATIVO JAHO\'I'),
         ]
+
+        # Orden explícito de departamentos (1-18)
+        self.departamento_orden = {
+            'CONCEPCIÓN': 1,
+            'SAN PEDRO': 2,
+            'CORDILLERA': 3,
+            'GUAIRÁ': 4,
+            'CAAGUAZÚ': 5,
+            'CAAZAPÁ': 6,
+            'ITAPÚA': 7,
+            'MISIONES': 8,
+            'PARAGUARÍ': 9,
+            'ALTO PARANÁ': 10,
+            'CENTRAL': 11,
+            'ÑEEMBUCÚ': 12,
+            'AMAMBAY': 13,
+            'CANINDEYÚ': 14,
+            'PDTE. HAYES': 15,
+            'BOQUERON': 16,
+            'ALTO PARAGUAY': 17,
+            'CAPITAL': 18
+        }
 
         # Mapeo de distritos a sus departamentos correspondientes
         self.distrito_a_departamento = {
@@ -229,9 +266,39 @@ class DataCleaner:
             'INCEND. DOMIC.': 'INCENDIO', 'INCENDIO DOMICILIARIO': 'INCENDIO',
             'DERRUMBE': 'INCENDIO', 'INCENDIO FORESTAL': 'INCENDIO',
 
+
             # TORMENTA SEVERA
-            'EVENTO CLIMATICO': 'TORMENTA SEVERA', 'TORMENTA SEVERA CENTRAL': 'TORMENTA SEVERA',
-            'EVENTO CLIMATICO TEMPORAL': 'TORMENTA SEVERA', 'MUNICIPALIDAD': 'TORMENTA SEVERA',
+            'EVENTO CLIMATICO': 'TORMENTA SEVERA',
+            'TORMENTA SEVERA CENTRAL': 'TORMENTA SEVERA',
+            'EVENTO CLIMATICO TEMPORAL': 'TORMENTA SEVERA',
+            'MUNICIPALIDAD': 'TORMENTA SEVERA',
+            'TEMPORAL': 'TORMENTA SEVERA',
+            'TEMPORAL CENTRAL': 'TORMENTA SEVERA',
+            'TEMPORAL - MUNICIPALIDAD': 'TORMENTA SEVERA',
+            'TEMPORAL-GOBERNACION': 'TORMENTA SEVERA',
+            'TEMPORAL - GOBERNACION': 'TORMENTA SEVERA',
+            'TEMPORAL-GOBERNACIÓN': 'TORMENTA SEVERA',
+            'TEMPORAL - GOBERNACIÓN': 'TORMENTA SEVERA',
+            'TEMPORAL CENTRAL MUNICIPALIDAD': 'TORMENTA SEVERA',
+            'TEMPORAL MUNICIPALIDAD': 'TORMENTA SEVERA',
+            'TEMPORAL - COMPLEMENTOEXP. 078/19': 'TORMENTA SEVERA',
+            'ASISTENCIA TEMPORAL': 'TORMENTA SEVERA',
+            'ASISTENCIA - TEMPORAL': 'TORMENTA SEVERA',
+            'TEMPORAL - CAMARA DE DIPUTADOS': 'TORMENTA SEVERA',
+            'TEMPORAL - COMISION VECINAL': 'TORMENTA SEVERA',
+            'TEMPORAL - ASENTAMIENTO 8 DE DICIEMBRE': 'TORMENTA SEVERA',
+            'TEMPORAL - OLLA POPULAR': 'TORMENTA SEVERA',
+            'TEMPORAL CENTRAL  MUNICIPALIDAD': 'TORMENTA SEVERA',
+            'TEMPORAL  CENTRAL': 'TORMENTA SEVERA',
+            'TEMPORAL  - MUNICIPALIDAD': 'TORMENTA SEVERA',
+            'TEMPORAL  - GOBERNACION': 'TORMENTA SEVERA',
+            'TEMPORAL  - GOBERNACIÓN': 'TORMENTA SEVERA',
+            'TEMPORAL  MUNICIPALIDAD': 'TORMENTA SEVERA',
+            'TEMPORAL  - COMPLEMENTOEXP. 078/19': 'TORMENTA SEVERA',
+            'TEMPORAL  - CAMARA DE DIPUTADOS': 'TORMENTA SEVERA',
+            'TEMPORAL  - COMISION VECINAL': 'TORMENTA SEVERA',
+            'TEMPORAL  - ASENTAMIENTO 8 DE DICIEMBRE': 'TORMENTA SEVERA',
+            'TEMPORAL  - OLLA POPULAR': 'TORMENTA SEVERA',
 
             # SEQUIA
             'SEQ. E INUND.': 'SEQUIA', 'SEQ./INUND.': 'SEQUIA', 'SEQUIA-INUND.': 'SEQUIA',
@@ -379,31 +446,30 @@ class DataCleaner:
     def post_process_eventos_with_aids(self, row):
         """Ajusta el evento basado en la presencia de ayudas según nuevos requerimientos."""
         evento = row['evento']
-        
+
         # Si es preposicionamiento, lo eliminamos
         if evento == 'PREPOSICIONAMIENTO':
             return "ELIMINAR_REGISTRO"
 
         # Si no tiene evento, aplicamos las nuevas reglas
         if evento == 'SIN EVENTO':
-            # Verificamos si es Boqueron, Alto Paraguay o PDTE. HAYES -> SEQUIA
             departamento = row.get('departamento', '').upper()
+            # Si tiene chapa_zinc > 0, es TORMENTA SEVERA
+            if row.get('chapa_zinc', 0) > 0:
+                return 'TORMENTA SEVERA'
+            # Verificamos si es Boqueron, Alto Paraguay o PDTE. HAYES -> SEQUIA
             if departamento in ['BOQUERON', 'ALTO PARAGUAY', 'PDTE. HAYES']:
                 return 'SEQUIA'
-            
             # Verificamos si tiene kits -> EXTREMA VULNERABILIDAD
             if (row.get('kit_sentencia', 0) > 0 or row.get('kit_eventos', 0) > 0):
                 return 'EXTREMA VULNERABILIDAD'
-            
             # Verificamos si tiene viveres <10 con materiales -> INCENDIO
-            # Asumimos que 'viveres' es otro campo de ayuda (si no existe, deberías agregarlo)
             viveres = row.get('viveres', 0)
             materiales = sum(row.get(field, 0) for field in ['chapa_fibrocemento', 'chapa_zinc', 
                                                            'colchones', 'frazadas', 'terciadas', 
                                                            'puntales', 'carpas_plasticas'])
             if viveres > 0 and viveres < 10 and materiales > 0:
                 return 'INCENDIO'
-            
             # Verificamos si tiene viveres y es de 2020 o 2021 -> OLLA POPULAR
             fecha = row.get('fecha')
             if fecha and viveres > 0:
@@ -413,14 +479,11 @@ class DataCleaner:
                         return 'OLLA POPULAR'
                 except:
                     pass
-            
             # Verificamos si es CAPITAL y solo tiene viveres -> INUNDACION
             if departamento == 'CAPITAL' and viveres > 0 and materiales == 0:
                 return 'INUNDACION'
-            
-            # Si no cumple ninguna regla, dejamos SIN EVENTO
+            # Si no cumple ninguna regla, dejamos EXTREMA VULNERABILIDAD
             return 'EXTREMA VULNERABILIDAD'
-        
         return evento
 
     def corregir_distrito_como_departamento(self, departamento, distrito):
@@ -445,25 +508,27 @@ class DataCleaner:
         if distrito_str is None:
             distrito_str = ''
 
-        depto_raw = str(departamento_str).strip()
 
-        # 1. Primero: estandarizar usando el diccionario
+        depto_raw = str(departamento_str).strip()
         depto_upper = depto_raw.upper()
+
+        # 1. Primero: estandarizar usando el diccionario (siempre buscar en mayúsculas)
         if depto_upper in self.estandarizacion_dept:
             depto_std = self.estandarizacion_dept[depto_upper]
         else:
-            depto_std = depto_raw
+            # Si la clave no está, intentar buscar la versión capitalizada (por si acaso)
+            depto_std = self.estandarizacion_dept.get(depto_raw.upper(), depto_upper)
 
         # 2. Verificar si es un caso especial (VARIOS, SIN_DEPARTAMENTO, etc.)
-        # Nota: ahora usamos el valor estandarizado
         if depto_std in ['VARIOS DEPARTAMENTOS', 'INDI', 'VARIOS']:
             return 'CENTRAL'
-
         if depto_std == 'SIN_DEPARTAMENTO':
             return 'CENTRAL'
 
-        # 3. Corregir si el departamento es en realidad un distrito
-        depto_std, distrito_str = self.corregir_distrito_como_departamento(depto_std, distrito_str)
+        # 3. Corregir si el departamento es en realidad un distrito (siempre que sea un distrito conocido)
+        # Esto se hace siempre, no solo si el distrito está vacío
+        if depto_std.upper() in self.distrito_a_departamento:
+            depto_std = self.distrito_a_departamento[depto_std.upper()]
 
         # 4. Separadores: quedarnos con la primera parte
         separators = [' - ', ' / ', ', ', ' Y ']
@@ -503,21 +568,40 @@ class DataCleaner:
 
         # Limpiar distrito primero
         cleaned_record['distrito'] = self.limpiar_texto(record_dict.get('distrito'))
-        
+
         # Limpiar departamento
         departamento_raw = record_dict.get('departamento')
         distrito_raw = cleaned_record['distrito']
-        
+
+        # Detectar si el departamento es un distrito conocido
+        dep_upper = str(departamento_raw).strip().upper() if departamento_raw else ''
+        es_distrito_conocido = dep_upper in self.distrito_a_departamento
+
+        # Si el departamento es un distrito conocido y el campo distrito ya tiene valor, mover distrito a localidad
+        if es_distrito_conocido and cleaned_record['distrito'] and cleaned_record['distrito'] != 'SIN_ESPECIFICAR':
+            # Guardar el valor anterior de distrito en localidad (si localidad ya tiene valor, concatenar)
+            localidad_ant = self.limpiar_texto(record_dict.get('localidad'))
+            if localidad_ant and localidad_ant != 'SIN_ESPECIFICAR':
+                cleaned_record['localidad'] = f"{cleaned_record['distrito'].title()} / {localidad_ant.title()}"
+            else:
+                cleaned_record['localidad'] = cleaned_record['distrito'].title()
+            # Poner el distrito corregido
+            cleaned_record['distrito'] = str(departamento_raw).strip().title()
+        else:
+            # Resto de la limpieza de localidad
+            cleaned_record['localidad'] = self.limpiar_texto(record_dict.get('localidad'))
+
+        # Limpiar departamento (después de la lógica de localidad/distrito)
         cleaned_record['departamento'] = self.limpiar_departamento(departamento_raw, distrito_raw)
-        
+
+        # Asignar el orden del departamento (si corresponde)
+        depto_orden = self.departamento_orden.get(cleaned_record['departamento'].upper())
+        cleaned_record['orden_departamento'] = depto_orden if depto_orden is not None else None
+
         # Si el distrito está vacío pero el departamento es un distrito conocido
-        if (not cleaned_record['distrito'] or cleaned_record['distrito'] == 'SIN ESPECIFICAR'):
-            dep_upper = str(departamento_raw).strip().upper() if departamento_raw else ''
-            if dep_upper in self.distrito_a_departamento:
+        if (not cleaned_record['distrito'] or cleaned_record['distrito'] == 'SIN_ESPECIFICAR'):
+            if es_distrito_conocido:
                 cleaned_record['distrito'] = str(departamento_raw).strip().title()
-        
-        # Resto de la limpieza
-        cleaned_record['localidad'] = self.limpiar_texto(record_dict.get('localidad'))
 
         # Manejo de fechas
         fecha_raw = record_dict.get('fecha')

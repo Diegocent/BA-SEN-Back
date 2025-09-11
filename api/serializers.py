@@ -9,7 +9,7 @@ class DimFechaSerializer(serializers.ModelSerializer):
 class DimUbicacionSerializer(serializers.ModelSerializer):
     class Meta:
         model = DimUbicacion
-        fields = ['departamento', 'distrito', 'localidad']
+        fields = ['departamento', 'distrito', 'localidad', 'orden']
 
 class DimEventoSerializer(serializers.ModelSerializer):
     class Meta:
@@ -39,6 +39,7 @@ class TotalAyudasSerializer(serializers.Serializer):
     mes = serializers.IntegerField(required=False)
     nombre_mes = serializers.CharField(required=False, max_length=20)
     departamento = serializers.CharField(required=False, max_length=50)
+    orden = serializers.IntegerField(required=False)
     distrito = serializers.CharField(required=False, max_length=50)
     evento = serializers.CharField(required=False, max_length=50)
     tipoEvento = serializers.CharField(required=False, max_length=50)
@@ -46,3 +47,20 @@ class TotalAyudasSerializer(serializers.Serializer):
     kit_sentencia = serializers.IntegerField(required=False)
     kit_evento = serializers.IntegerField(required=False)
     chapas = serializers.IntegerField(required=False)
+    localidad = serializers.CharField(required=False, max_length=100)
+    numero_eventos = serializers.IntegerField(required=False)
+    numero_asistencias = serializers.IntegerField(required=False)
+    unidades_distribuidas = serializers.IntegerField(required=False)
+    carpas = serializers.IntegerField(required=False)
+
+class ResumenGeneralSerializer(serializers.Serializer):
+    cantidad_registros_total = serializers.IntegerField()
+    cantidad_kit_evento = serializers.IntegerField()
+    cantidad_departamentos = serializers.IntegerField()
+
+class ResumenPorDepartamentoSerializer(serializers.Serializer):
+    departamento = serializers.CharField()
+    total_kits = serializers.IntegerField()
+    total_chapas = serializers.IntegerField()
+    cantidad_registros = serializers.IntegerField()
+    evento_mas_frecuente = serializers.CharField()
