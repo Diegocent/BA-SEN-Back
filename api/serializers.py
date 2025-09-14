@@ -46,12 +46,36 @@ class TotalAyudasSerializer(serializers.Serializer):
     numeroOcurrencias = serializers.IntegerField(required=False)
     kit_sentencia = serializers.IntegerField(required=False)
     kit_evento = serializers.IntegerField(required=False)
+    chapa_fibrocemento_cantidad = serializers.IntegerField(required=False)
+    chapa_zinc_cantidad = serializers.IntegerField(required=False)
+    colchones_cantidad = serializers.IntegerField(required=False)
+    frazadas_cantidad = serializers.IntegerField(required=False)
+    terciadas_cantidad = serializers.IntegerField(required=False)
+    puntales_cantidad = serializers.IntegerField(required=False)
+    carpas_plasticas_cantidad = serializers.IntegerField(required=False)
     chapas = serializers.IntegerField(required=False)
     localidad = serializers.CharField(required=False, max_length=100)
     numero_eventos = serializers.IntegerField(required=False)
     numero_asistencias = serializers.IntegerField(required=False)
-    unidades_distribuidas = serializers.IntegerField(required=False)
-    carpas = serializers.IntegerField(required=False)
+    unidades_distribuidas = serializers.SerializerMethodField()
+
+    def get_unidades_distribuidas(self, obj):
+        # Si el serializer recibe un contexto con 'producto', solo devuelve ese campo
+        producto = self.context.get('producto') if hasattr(self, 'context') else None
+        if producto and producto in obj:
+            return obj.get(producto, 0) or 0
+        # Si no, suma todos los campos (comportamiento general)
+        return sum([
+            obj.get('kit_sentencia', 0) or 0,
+            obj.get('kit_evento', 0) or 0,
+            obj.get('chapa_fibrocemento_cantidad', 0) or 0,
+            obj.get('chapa_zinc_cantidad', 0) or 0,
+            obj.get('colchones_cantidad', 0) or 0,
+            obj.get('frazadas_cantidad', 0) or 0,
+            obj.get('terciadas_cantidad', 0) or 0,
+            obj.get('puntales_cantidad', 0) or 0,
+            obj.get('carpas_plasticas_cantidad', 0) or 0
+        ])
 
 class ResumenGeneralSerializer(serializers.Serializer):
     cantidad_registros_total = serializers.IntegerField()
@@ -64,3 +88,7 @@ class ResumenPorDepartamentoSerializer(serializers.Serializer):
     total_chapas = serializers.IntegerField()
     cantidad_registros = serializers.IntegerField()
     evento_mas_frecuente = serializers.CharField()
+
+class DistribucionAnualProductoSerializer(serializers.Serializer):
+    anio = serializers.IntegerField()
+    unidades_distribuidas = serializers.IntegerField()
