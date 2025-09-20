@@ -8,7 +8,7 @@ from .serializers import HechosAsistenciaHumanitariaSerializer, TotalAyudasSeria
 import logging
 from datetime import datetime
 from rest_framework.views import APIView
-from .serializers import ResumenGeneralSerializer, DistribucionAnualProductoSerializer
+from .serializers import ResumenGeneralSerializer, DistribucionAnualProductoSerializer, ResumenPorDepartamentoSerializer
 import django_filters
 from rest_framework.filters import OrderingFilter
 from django_filters.rest_framework import DjangoFilterBackend
@@ -115,6 +115,8 @@ class AsistenciaAnualAPIView(generics.ListAPIView):
     Endpoint para ver la asistencia humanitaria total por año.
     """
     serializer_class = TotalAyudasSerializer
+    filter_backends = [DjangoFilterBackend]
+    filterset_class = HechosAsistenciaHumanitariaFilterSet
     pagination_class = StandardResultsSetPagination
     filter_backends = [DjangoFilterBackend]
     filterset_class = HechosAsistenciaHumanitariaFilterSet
@@ -130,6 +132,8 @@ class AsistenciaMensualAPIView(generics.ListAPIView):
     Endpoint para ver la asistencia humanitaria total por mes.
     """
     serializer_class = TotalAyudasSerializer
+    filter_backends = [DjangoFilterBackend]
+    filterset_class = HechosAsistenciaHumanitariaFilterSet
     pagination_class = StandardResultsSetPagination
     filter_backends = [DjangoFilterBackend]
     filterset_class = HechosAsistenciaHumanitariaFilterSet
@@ -156,6 +160,8 @@ class AsistenciaPorUbicacionAPIView(generics.ListAPIView):
     Endpoint para ver la asistencia humanitaria por departamento y distrito.
     """
     serializer_class = TotalAyudasSerializer
+    filter_backends = [DjangoFilterBackend]
+    filterset_class = HechosAsistenciaHumanitariaFilterSet
     pagination_class = StandardResultsSetPagination
     filter_backends = [DjangoFilterBackend]
     filterset_class = HechosAsistenciaHumanitariaFilterSet
@@ -175,6 +181,8 @@ class AsistenciaPorDepartamentoAPIView(generics.ListAPIView):
     Endpoint para ver la asistencia humanitaria por departamento.
     """
     serializer_class = TotalAyudasSerializer
+    filter_backends = [DjangoFilterBackend]
+    filterset_class = HechosAsistenciaHumanitariaFilterSet
     pagination_class = StandardResultsSetPagination
     filter_backends = [DjangoFilterBackend]
     filterset_class = HechosAsistenciaHumanitariaFilterSet
@@ -257,25 +265,20 @@ class EventosPorLocalidadAPIView(generics.ListAPIView):
     Endpoint para ver las localidades con más eventos registrados.
     """
     serializer_class = TotalAyudasSerializer
+    filter_backends = [DjangoFilterBackend]
+    filterset_class = HechosAsistenciaHumanitariaFilterSet
 
     def get_queryset(self):
         queryset = HechosAsistenciaHumanitaria.objects.values(
             localidad=F('id_ubicacion__localidad')
         )
-        start_date = self.request.query_params.get('start_date')
-        end_date = self.request.query_params.get('end_date')
-        if start_date and end_date:
-            try:
-                start_date_obj = datetime.strptime(start_date, '%Y-%m-%d').date()
-                end_date_obj = datetime.strptime(end_date, '%Y-%m-%d').date()
-                queryset = queryset.filter(id_fecha__fecha__range=(start_date_obj, end_date_obj))
-            except ValueError:
-                return queryset.none()
-        # Excluir localidad 'SIN ESPECIFICAR', anotar y devolver solo el top 5
+        # El filtrado por fecha lo hace el FilterSet
+        # Excluir localidad 'SIN ESPECIFICAR', anotar y ordenar
         queryset = queryset.exclude(id_ubicacion__localidad="SIN ESPECIFICAR")
         queryset = queryset.annotate(
             numero_eventos=Count('id_evento')
-        ).order_by('-numero_eventos')[:5]
+        ).order_by('-numero_eventos')
+        # Devuelve todos los resultados ordenados, el frontend mostrará el top 5
         return queryset
 
 class AsistenciasPorAnioDepartamentoAPIView(generics.ListAPIView):
@@ -284,22 +287,14 @@ class AsistenciasPorAnioDepartamentoAPIView(generics.ListAPIView):
     Útil para mapas de calor.
     """
     serializer_class = TotalAyudasSerializer
-
+    filter_backends = [DjangoFilterBackend]
+    filterset_class = HechosAsistenciaHumanitariaFilterSet
     def get_queryset(self):
         queryset = HechosAsistenciaHumanitaria.objects.values(
             anio=F('id_fecha__anio'),
             departamento=F('id_ubicacion__departamento')
         )
-        start_date = self.request.query_params.get('start_date')
-        end_date = self.request.query_params.get('end_date')
-        if start_date and end_date:
-            try:
-                
-                start_date_obj = datetime.strptime(start_date, '%Y-%m-%d').date()
-                end_date_obj = datetime.strptime(end_date, '%Y-%m-%d').date()
-                queryset = queryset.filter(id_fecha__fecha__range=(start_date_obj, end_date_obj))
-            except ValueError:
-                return queryset.none()
+        # El filtrado por fecha lo hace el FilterSet
         queryset = queryset.annotate(
             chapas=Sum('chapa_fibrocemento_cantidad') + Sum('chapa_zinc_cantidad')
         )
@@ -311,6 +306,8 @@ class TendenciaMensualAsistenciasAPIView(generics.ListAPIView):
     Endpoint para la tendencia mensual de asistencias (contador de eventos).
     """
     serializer_class = TotalAyudasSerializer
+    filter_backends = [DjangoFilterBackend]
+    filterset_class = HechosAsistenciaHumanitariaFilterSet
 
     def get_queryset(self):
         evento_param = self.request.query_params.get('evento')
@@ -322,15 +319,6 @@ class TendenciaMensualAsistenciasAPIView(generics.ListAPIView):
         if evento_param:
             queryset = queryset.filter(id_evento__evento=evento_param)
         
-        start_date = self.request.query_params.get('start_date')
-        end_date = self.request.query_params.get('end_date')
-        if start_date and end_date:
-            try:
-                start_date_obj = datetime.strptime(start_date, '%Y-%m-%d').date()
-                end_date_obj = datetime.strptime(end_date, '%Y-%m-%d').date()
-                queryset = queryset.filter(id_fecha__fecha__range=(start_date_obj, end_date_obj))
-            except ValueError:
-                return queryset.none()
         
         # Incluir todos los campos necesarios para el serializer
         return queryset.annotate(
@@ -351,22 +339,15 @@ class DistribucionMensualDetalladaAPIView(generics.ListAPIView):
     Endpoint para la distribución mensual de asistencias por elemento.
     """
     serializer_class = TotalAyudasSerializer
+    filter_backends = [DjangoFilterBackend]
+    filterset_class = HechosAsistenciaHumanitariaFilterSet
 
     def get_queryset(self):
         queryset = HechosAsistenciaHumanitaria.objects.values(
             nombre_mes=F('id_fecha__nombre_mes'),
             mes=F('id_fecha__mes')
         )
-        start_date = self.request.query_params.get('start_date')
-        end_date = self.request.query_params.get('end_date')
-        if start_date and end_date:
-            try:
-                
-                start_date_obj = datetime.strptime(start_date, '%Y-%m-%d').date()
-                end_date_obj = datetime.strptime(end_date, '%Y-%m-%d').date()
-                queryset = queryset.filter(id_fecha__fecha__range=(start_date_obj, end_date_obj))
-            except ValueError:
-                return queryset.none()
+        # El filtrado por fecha lo hace el FilterSet
         queryset = queryset.annotate(
             chapas=Sum(F('chapa_fibrocemento_cantidad') + F('chapa_zinc_cantidad'))
         )
@@ -378,6 +359,8 @@ class DistribucionAnualProductoAPIView(generics.ListAPIView):
     Recibe el nombre del producto en los parámetros de la URL.
     """
     serializer_class = DistribucionAnualProductoSerializer
+    filter_backends = [DjangoFilterBackend]
+    filterset_class = HechosAsistenciaHumanitariaFilterSet
     
     # Mapeo de nombres de productos a los campos del modelo
     PRODUCT_MAPPING = {
@@ -405,15 +388,7 @@ class DistribucionAnualProductoAPIView(generics.ListAPIView):
             unidades_distribuidas=Sum(campo_producto)
         )
 
-        start_date = self.request.query_params.get('start_date')
-        end_date = self.request.query_params.get('end_date')
-        if start_date and end_date:
-            try:
-                start_date_obj = datetime.strptime(start_date, '%Y-%m-%d').date()
-                end_date_obj = datetime.strptime(end_date, '%Y-%m-%d').date()
-                queryset = queryset.filter(id_fecha__fecha__range=(start_date_obj, end_date_obj))
-            except ValueError:
-                return queryset.none()
+        # El filtrado por fecha lo hace el FilterSet
 
         return queryset.order_by('anio')
 
@@ -423,21 +398,13 @@ class AsistenciasPorEventoAPIView(generics.ListAPIView):
     Endpoint para ver eventos con mayor número de unidades distribuidas.
     """
     serializer_class = TotalAyudasSerializer
+    filter_backends = [DjangoFilterBackend]
+    filterset_class = HechosAsistenciaHumanitariaFilterSet
 
     def get_queryset(self):
-        queryset = HechosAsistenciaHumanitaria.objects.values(
-            evento=F('id_evento__evento')
-        )
-        start_date = self.request.query_params.get('start_date')
-        end_date = self.request.query_params.get('end_date')
-        if start_date and end_date:
-            try:
-                
-                start_date_obj = datetime.strptime(start_date, '%Y-%m-%d').date()
-                end_date_obj = datetime.strptime(end_date, '%Y-%m-%d').date()
-                queryset = queryset.filter(id_fecha__fecha__range=(start_date_obj, end_date_obj))
-            except ValueError:
-                return queryset.none()
+        # El filtrado por fecha y otros campos lo hace el FilterSet
+        qs = HechosAsistenciaHumanitaria.objects.all()
+        queryset = qs.values(evento=F('id_evento__evento'))
         queryset = queryset.annotate(
             chapas=Sum(F('chapa_fibrocemento_cantidad') + F('chapa_zinc_cantidad'))
         )
@@ -448,21 +415,14 @@ class ComposicionAyudasPorEventoAPIView(generics.ListAPIView):
     Endpoint para ver la composición de ayudas por tipo de evento.
     """
     serializer_class = TotalAyudasSerializer
+    filter_backends = [DjangoFilterBackend]
+    filterset_class = HechosAsistenciaHumanitariaFilterSet
 
     def get_queryset(self):
         queryset = HechosAsistenciaHumanitaria.objects.exclude(id_evento__evento='ELIMINAR_REGISTRO').values(
             evento=F('id_evento__evento')
         )
-        start_date = self.request.query_params.get('start_date')
-        end_date = self.request.query_params.get('end_date')
-        if start_date and end_date:
-            try:
-                
-                start_date_obj = datetime.strptime(start_date, '%Y-%m-%d').date()
-                end_date_obj = datetime.strptime(end_date, '%Y-%m-%d').date()
-                queryset = queryset.filter(id_fecha__fecha__range=(start_date_obj, end_date_obj))
-            except ValueError:
-                return queryset.none()
+        # El filtrado por fecha lo hace el FilterSet
         return _annotate_total_ayudas(queryset).order_by('evento')
 
 class OcurrenciasEventoAnualAPIView(generics.ListAPIView):
@@ -471,22 +431,15 @@ class OcurrenciasEventoAnualAPIView(generics.ListAPIView):
     Útil para mapas de calor.
     """
     serializer_class = TotalAyudasSerializer
+    filter_backends = [DjangoFilterBackend]
+    filterset_class = HechosAsistenciaHumanitariaFilterSet
 
     def get_queryset(self):
         queryset = HechosAsistenciaHumanitaria.objects.exclude(id_evento__evento='ELIMINAR_REGISTRO').values(
             anio=F('id_fecha__anio'),
             evento=F('id_evento__evento')
         )
-        start_date = self.request.query_params.get('start_date')
-        end_date = self.request.query_params.get('end_date')
-        if start_date and end_date:
-            try:
-                
-                start_date_obj = datetime.strptime(start_date, '%Y-%m-%d').date()
-                end_date_obj = datetime.strptime(end_date, '%Y-%m-%d').date()
-                queryset = queryset.filter(id_fecha__fecha__range=(start_date_obj, end_date_obj))
-            except ValueError:
-                return queryset.none()
+        # El filtrado por fecha lo hace el FilterSet
         return queryset.annotate(
             numeroOcurrencias=Count('id_asistencia_hum')
         ).order_by('anio', 'evento')
@@ -496,7 +449,8 @@ class IncendiosAnualesPorDepartamentoAPIView(generics.ListAPIView):
     Endpoint para ver el mapa de calor de incendios por año y departamento.
     """
     serializer_class = TotalAyudasSerializer
-
+    filter_backends = [DjangoFilterBackend]
+    filterset_class = HechosAsistenciaHumanitariaFilterSet
     def get_queryset(self):
         queryset = HechosAsistenciaHumanitaria.objects.filter(
             id_evento__evento__icontains='incendio'
@@ -504,16 +458,7 @@ class IncendiosAnualesPorDepartamentoAPIView(generics.ListAPIView):
             anio=F('id_fecha__anio'),
             departamento=F('id_ubicacion__departamento')
         )
-        start_date = self.request.query_params.get('start_date')
-        end_date = self.request.query_params.get('end_date')
-        if start_date and end_date:
-            try:
-                
-                start_date_obj = datetime.strptime(start_date, '%Y-%m-%d').date()
-                end_date_obj = datetime.strptime(end_date, '%Y-%m-%d').date()
-                queryset = queryset.filter(id_fecha__fecha__range=(start_date_obj, end_date_obj))
-            except ValueError:
-                return queryset.none()
+        # El filtrado por fecha lo hace el FilterSet
         queryset = queryset.annotate(
             numeroOcurrencias=Count('id_asistencia_hum')
         )
@@ -527,8 +472,8 @@ class ResumenGeneralAPIView(APIView):
     """
     def get(self, request, *args, **kwargs):
         queryset = HechosAsistenciaHumanitaria.objects.all()
-        start_date = request.query_params.get('start_date')
-        end_date = request.query_params.get('end_date')
+        start_date = request.query_params.get('fecha_desde')
+        end_date = request.query_params.get('fecha_hasta')
         if start_date and end_date:
             try:
                 start_date_obj = datetime.strptime(start_date, '%Y-%m-%d').date()
@@ -562,12 +507,20 @@ class ResumenPorDepartamentoAPIView(generics.ListAPIView):
     - Cantidad total de registros por departamento
     - El evento más frecuente en ese departamento
     """
-    from .serializers import ResumenPorDepartamentoSerializer
     serializer_class = ResumenPorDepartamentoSerializer
-
+    # No usar DjangoFilterBackend ni filterset_class, filtramos manualmente
     def get_queryset(self):
-        # Primero, obtén todos los datos agregados por departamento
-        queryset = HechosAsistenciaHumanitaria.objects.values(
+        # Filtrar manualmente por fecha si se pasan los parámetros
+        fecha_desde = self.request.query_params.get('fecha_desde')
+        fecha_hasta = self.request.query_params.get('fecha_hasta')
+        base_queryset = HechosAsistenciaHumanitaria.objects.all()
+        if fecha_desde:
+            base_queryset = base_queryset.filter(id_fecha__fecha__gte=fecha_desde)
+        if fecha_hasta:
+            base_queryset = base_queryset.filter(id_fecha__fecha__lte=fecha_hasta)
+
+        # Agregación por departamento
+        queryset = base_queryset.values(
             departamento=F('id_ubicacion__departamento')
         ).annotate(
             total_kits=Sum('kit_sentencia') + Sum('kit_evento'),
@@ -575,22 +528,20 @@ class ResumenPorDepartamentoAPIView(generics.ListAPIView):
             cantidad_registros=Count('id_asistencia_hum')
         ).order_by('-cantidad_registros')
 
-        # Para el evento más frecuente, agrupamos por departamento y evento, y contamos
-        eventos = HechosAsistenciaHumanitaria.objects.values(
+        # Evento más frecuente por departamento
+        eventos = base_queryset.values(
             'id_ubicacion__departamento', 'id_evento__evento'
         ).annotate(
             evento_count=Count('id_evento')
         ).order_by('id_ubicacion__departamento', '-evento_count')
 
-        # Diccionario para guardar el evento más frecuente por departamento
         mapa_eventos = {}
         for e in eventos:
             depto = e['id_ubicacion__departamento']
             if depto not in mapa_eventos:
                 mapa_eventos[depto] = e['id_evento__evento']
 
-        # Añade la columna 'evento_mas_frecuente' a nuestro queryset principal
+        queryset = list(queryset)
         for item in queryset:
-            item['evento_mas_frecuente'] = mapa_eventos.get(item['departamento'], 'N/A')
-
+            item['evento_mas_frecuente'] = mapa_eventos.get(item.get('departamento'), 'N/A')
         return queryset
