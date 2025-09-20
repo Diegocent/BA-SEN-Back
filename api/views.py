@@ -313,23 +313,38 @@ class TendenciaMensualAsistenciasAPIView(generics.ListAPIView):
     serializer_class = TotalAyudasSerializer
 
     def get_queryset(self):
+        evento_param = self.request.query_params.get('evento')
         queryset = HechosAsistenciaHumanitaria.objects.values(
             anio=F('id_fecha__anio'),
-            nombre_mes=F('id_fecha__nombre_mes')
+            nombre_mes=F('id_fecha__nombre_mes'),
+            mes=F('id_fecha__mes')
         )
+        if evento_param:
+            queryset = queryset.filter(id_evento__evento=evento_param)
+        
         start_date = self.request.query_params.get('start_date')
         end_date = self.request.query_params.get('end_date')
         if start_date and end_date:
             try:
-                
                 start_date_obj = datetime.strptime(start_date, '%Y-%m-%d').date()
                 end_date_obj = datetime.strptime(end_date, '%Y-%m-%d').date()
                 queryset = queryset.filter(id_fecha__fecha__range=(start_date_obj, end_date_obj))
             except ValueError:
                 return queryset.none()
+        
+        # Incluir todos los campos necesarios para el serializer
         return queryset.annotate(
-            numero_asistencias=Count('id_asistencia_hum')
-        ).order_by('anio', 'id_fecha__mes')
+            numero_asistencias=Count('id_asistencia_hum'),
+            kit_sentencia=Sum('kit_sentencia'),
+            kit_evento=Sum('kit_evento'),
+            chapa_fibrocemento_cantidad=Sum('chapa_fibrocemento_cantidad'),
+            chapa_zinc_cantidad=Sum('chapa_zinc_cantidad'),
+            colchones_cantidad=Sum('colchones_cantidad'),
+            frazadas_cantidad=Sum('frazadas_cantidad'),
+            terciadas_cantidad=Sum('terciadas_cantidad'),
+            puntales_cantidad=Sum('puntales_cantidad'),
+            carpas_plasticas_cantidad=Sum('carpas_plasticas_cantidad')
+        ).order_by('anio', 'mes')
 
 class DistribucionMensualDetalladaAPIView(generics.ListAPIView):
     """
