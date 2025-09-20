@@ -8,7 +8,7 @@ from .serializers import HechosAsistenciaHumanitariaSerializer, TotalAyudasSeria
 import logging
 from datetime import datetime
 from rest_framework.views import APIView
-from .serializers import ResumenGeneralSerializer
+from .serializers import ResumenGeneralSerializer, DistribucionAnualProductoSerializer
 import django_filters
 from rest_framework.filters import OrderingFilter
 from django_filters.rest_framework import DjangoFilterBackend
@@ -120,12 +120,10 @@ class AsistenciaAnualAPIView(generics.ListAPIView):
     filterset_class = HechosAsistenciaHumanitariaFilterSet
 
     def get_queryset(self):
-        return HechosAsistenciaHumanitaria.objects.exclude(id_evento__evento='ELIMINAR_REGISTRO').values('id_fecha__anio').annotate(
-            anio=F('id_fecha__anio'),
-            kit_sentencia=Sum('kit_sentencia'),
-            kit_evento=Sum('kit_evento'),
-            chapas=Sum(F('chapa_fibrocemento_cantidad') + F('chapa_zinc_cantidad'))
-        ).order_by('id_fecha__anio')
+        qs = HechosAsistenciaHumanitaria.objects.exclude(id_evento__evento='ELIMINAR_REGISTRO').values('id_fecha__anio')
+        qs = qs.annotate(anio=F('id_fecha__anio'))
+        qs = _annotate_total_ayudas(qs)
+        return qs.order_by('id_fecha__anio')
 
 class AsistenciaMensualAPIView(generics.ListAPIView):
     """
@@ -143,9 +141,14 @@ class AsistenciaMensualAPIView(generics.ListAPIView):
             nombre_mes=F('id_fecha__nombre_mes'),
             kit_sentencia=Sum('kit_sentencia'),
             kit_evento=Sum('kit_evento'),
-            chapas=Sum(F('chapa_fibrocemento_cantidad') + F('chapa_zinc_cantidad'))
+            chapa_fibrocemento_cantidad=Sum('chapa_fibrocemento_cantidad'),
+            chapa_zinc_cantidad=Sum('chapa_zinc_cantidad'),
+            colchones_cantidad=Sum('colchones_cantidad'),
+            frazadas_cantidad=Sum('frazadas_cantidad'),
+            terciadas_cantidad=Sum('terciadas_cantidad'),
+            puntales_cantidad=Sum('puntales_cantidad'),
+            carpas_plasticas_cantidad=Sum('carpas_plasticas_cantidad')
         ).order_by('id_fecha__anio', 'id_fecha__mes')
-        
         return queryset
     
 class AsistenciaPorUbicacionAPIView(generics.ListAPIView):
@@ -177,16 +180,13 @@ class AsistenciaPorDepartamentoAPIView(generics.ListAPIView):
     filterset_class = HechosAsistenciaHumanitariaFilterSet
 
     def get_queryset(self):
-        queryset = HechosAsistenciaHumanitaria.objects.exclude(id_evento__evento='ELIMINAR_REGISTRO').values('id_ubicacion__departamento', 'id_ubicacion__orden').annotate(
+        queryset = HechosAsistenciaHumanitaria.objects.exclude(id_evento__evento='ELIMINAR_REGISTRO').values('id_ubicacion__departamento', 'id_ubicacion__orden')
+        queryset = queryset.annotate(
             departamento=F('id_ubicacion__departamento'),
-            orden=F('id_ubicacion__orden'),
-            kit_sentencia=Sum('kit_sentencia'),
-            kit_evento=Sum('kit_evento'),
-            chapas=Sum(F('chapa_fibrocemento_cantidad') + F('chapa_zinc_cantidad')),
-            carpas=Sum('carpas_plasticas_cantidad')
-        ).order_by('id_ubicacion__orden', 'id_ubicacion__departamento')
-
-        return queryset
+            orden=F('id_ubicacion__orden')
+        )
+        queryset = _annotate_total_ayudas(queryset)
+        return queryset.order_by('id_ubicacion__orden', 'id_ubicacion__departamento')
 class AsistenciaPorEventoAPIView(generics.ListAPIView):
     """
     Endpoint para ver la asistencia humanitaria por tipo de evento.
@@ -266,15 +266,17 @@ class EventosPorLocalidadAPIView(generics.ListAPIView):
         end_date = self.request.query_params.get('end_date')
         if start_date and end_date:
             try:
-                
                 start_date_obj = datetime.strptime(start_date, '%Y-%m-%d').date()
                 end_date_obj = datetime.strptime(end_date, '%Y-%m-%d').date()
                 queryset = queryset.filter(id_fecha__fecha__range=(start_date_obj, end_date_obj))
             except ValueError:
                 return queryset.none()
-        return queryset.annotate(
+        # Excluir localidad 'SIN ESPECIFICAR', anotar y devolver solo el top 5
+        queryset = queryset.exclude(id_ubicacion__localidad="SIN ESPECIFICAR")
+        queryset = queryset.annotate(
             numero_eventos=Count('id_evento')
-        ).order_by('-numero_eventos')
+        ).order_by('-numero_eventos')[:5]
+        return queryset
 
 class AsistenciasPorAnioDepartamentoAPIView(generics.ListAPIView):
     """
@@ -311,23 +313,38 @@ class TendenciaMensualAsistenciasAPIView(generics.ListAPIView):
     serializer_class = TotalAyudasSerializer
 
     def get_queryset(self):
+        evento_param = self.request.query_params.get('evento')
         queryset = HechosAsistenciaHumanitaria.objects.values(
             anio=F('id_fecha__anio'),
-            nombre_mes=F('id_fecha__nombre_mes')
+            nombre_mes=F('id_fecha__nombre_mes'),
+            mes=F('id_fecha__mes')
         )
+        if evento_param:
+            queryset = queryset.filter(id_evento__evento=evento_param)
+        
         start_date = self.request.query_params.get('start_date')
         end_date = self.request.query_params.get('end_date')
         if start_date and end_date:
             try:
-                
                 start_date_obj = datetime.strptime(start_date, '%Y-%m-%d').date()
                 end_date_obj = datetime.strptime(end_date, '%Y-%m-%d').date()
                 queryset = queryset.filter(id_fecha__fecha__range=(start_date_obj, end_date_obj))
             except ValueError:
                 return queryset.none()
+        
+        # Incluir todos los campos necesarios para el serializer
         return queryset.annotate(
-            numero_asistencias=Count('id_asistencia_hum')
-        ).order_by('anio', 'id_fecha__mes')
+            numero_asistencias=Count('id_asistencia_hum'),
+            kit_sentencia=Sum('kit_sentencia'),
+            kit_evento=Sum('kit_evento'),
+            chapa_fibrocemento_cantidad=Sum('chapa_fibrocemento_cantidad'),
+            chapa_zinc_cantidad=Sum('chapa_zinc_cantidad'),
+            colchones_cantidad=Sum('colchones_cantidad'),
+            frazadas_cantidad=Sum('frazadas_cantidad'),
+            terciadas_cantidad=Sum('terciadas_cantidad'),
+            puntales_cantidad=Sum('puntales_cantidad'),
+            carpas_plasticas_cantidad=Sum('carpas_plasticas_cantidad')
+        ).order_by('anio', 'mes')
 
 class DistribucionMensualDetalladaAPIView(generics.ListAPIView):
     """
@@ -360,7 +377,7 @@ class DistribucionAnualProductoAPIView(generics.ListAPIView):
     Endpoint para la distribución anual de un producto específico.
     Recibe el nombre del producto en los parámetros de la URL.
     """
-    serializer_class = TotalAyudasSerializer
+    serializer_class = DistribucionAnualProductoSerializer
     
     # Mapeo de nombres de productos a los campos del modelo
     PRODUCT_MAPPING = {
@@ -382,22 +399,23 @@ class DistribucionAnualProductoAPIView(generics.ListAPIView):
         if not campo_producto:
             return HechosAsistenciaHumanitaria.objects.none()
 
-        queryset = HechosAsistenciaHumanitaria.objects.values(
+        queryset = HechosAsistenciaHumanitaria.objects.exclude(id_evento__evento='ELIMINAR_REGISTRO').values(
             anio=F('id_fecha__anio')
+        ).annotate(
+            unidades_distribuidas=Sum(campo_producto)
         )
+
         start_date = self.request.query_params.get('start_date')
         end_date = self.request.query_params.get('end_date')
         if start_date and end_date:
             try:
-                
                 start_date_obj = datetime.strptime(start_date, '%Y-%m-%d').date()
                 end_date_obj = datetime.strptime(end_date, '%Y-%m-%d').date()
                 queryset = queryset.filter(id_fecha__fecha__range=(start_date_obj, end_date_obj))
             except ValueError:
                 return queryset.none()
-        return queryset.annotate(
-            unidades_distribuidas=Sum(campo_producto)
-        ).order_by('anio')
+
+        return queryset.order_by('anio')
 
 # Por eventos
 class AsistenciasPorEventoAPIView(generics.ListAPIView):
