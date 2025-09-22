@@ -21,7 +21,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 class StandardResultsSetPagination(PageNumberPagination):
     page_size = 10
     page_size_query_param = 'per_page'
-    max_page_size = 100
+    max_page_size = None
 
 def _annotate_total_ayudas(queryset):
     """
