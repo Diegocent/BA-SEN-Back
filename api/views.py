@@ -5,17 +5,12 @@ from rest_framework.pagination import PageNumberPagination
 from django.db.models import Sum, Count, Q, F
 from .models import HechosAsistenciaHumanitaria
 from .serializers import HechosAsistenciaHumanitariaSerializer, TotalAyudasSerializer
-import logging
 from datetime import datetime
 from rest_framework.views import APIView
 from .serializers import ResumenGeneralSerializer, DistribucionAnualProductoSerializer, ResumenPorDepartamentoSerializer
 import django_filters
-from rest_framework.filters import OrderingFilter
+# from rest_framework.filters import OrderingFilter
 from django_filters.rest_framework import DjangoFilterBackend
-
-# Configurar logging para ver las consultas
-# logging.basicConfig(level=logging.DEBUG)
-# logging.getLogger('django.db.backends').setLevel(logging.DEBUG)
 
 # Configuración de paginación
 class StandardResultsSetPagination(PageNumberPagination):
@@ -37,8 +32,6 @@ def _annotate_total_ayudas(queryset):
         terciadas_cantidad=Sum('terciadas_cantidad'),
         puntales_cantidad=Sum('puntales_cantidad'),
         carpas_plasticas_cantidad=Sum('carpas_plasticas_cantidad'),
-        carpas=F('carpas_plasticas_cantidad'),
-        chapas=F('chapa_fibrocemento_cantidad') + F('chapa_zinc_cantidad'),
         total_ayudas=F('kit_sentencia') + F('kit_evento') +
             F('chapa_fibrocemento_cantidad') + F('chapa_zinc_cantidad') +
             F('colchones_cantidad') + F('frazadas_cantidad') +
@@ -85,7 +78,7 @@ class HechosAsistenciaHumanitariaFilterSet(django_filters.FilterSet):
     class Meta:
         model = HechosAsistenciaHumanitaria
         fields = '__all__'
-class AsistenciaDetalladaViewSet(viewsets.ReadOnlyModelViewSet):
+class AsistenciaDetalladaAPIView(generics.ListAPIView):
     """
     Vista que devuelve el detalle de los registros, incluyendo la ubicación,
     el evento y las cantidades de ayuda. Soporta filtros y paginación.
@@ -97,18 +90,7 @@ class AsistenciaDetalladaViewSet(viewsets.ReadOnlyModelViewSet):
     filterset_class = HechosAsistenciaHumanitariaFilterSet
 
     def get_queryset(self):
-        queryset = super().get_queryset()
-        # ...existing code...
-        # Si quieres mantener la búsqueda general, puedes dejar este bloque:
-        input_busqueda = self.request.query_params.get('inputBusqueda')
-        if input_busqueda:
-            queryset = queryset.filter(
-                Q(id_ubicacion__departamento__icontains=input_busqueda) |
-                Q(id_ubicacion__distrito__icontains=input_busqueda) |
-                Q(id_ubicacion__localidad__icontains=input_busqueda) |
-                Q(id_evento__evento__icontains=input_busqueda)
-            )
-        return queryset.order_by('-id_fecha__fecha')
+        return super().get_queryset().order_by('-id_fecha__fecha')
 
 class AsistenciaAnualAPIView(generics.ListAPIView):
     """
@@ -143,17 +125,8 @@ class AsistenciaMensualAPIView(generics.ListAPIView):
             anio=F('id_fecha__anio'),
             mes=F('id_fecha__mes'),
             nombre_mes=F('id_fecha__nombre_mes'),
-            kit_sentencia=Sum('kit_sentencia'),
-            kit_evento=Sum('kit_evento'),
-            chapa_fibrocemento_cantidad=Sum('chapa_fibrocemento_cantidad'),
-            chapa_zinc_cantidad=Sum('chapa_zinc_cantidad'),
-            colchones_cantidad=Sum('colchones_cantidad'),
-            frazadas_cantidad=Sum('frazadas_cantidad'),
-            terciadas_cantidad=Sum('terciadas_cantidad'),
-            puntales_cantidad=Sum('puntales_cantidad'),
-            carpas_plasticas_cantidad=Sum('carpas_plasticas_cantidad')
         ).order_by('id_fecha__anio', 'id_fecha__mes')
-        return queryset
+        return _annotate_total_ayudas(queryset)
     
 class AsistenciaPorUbicacionAPIView(generics.ListAPIView):
     """
@@ -170,12 +143,9 @@ class AsistenciaPorUbicacionAPIView(generics.ListAPIView):
         queryset = HechosAsistenciaHumanitaria.objects.exclude(id_evento__evento='ELIMINAR_REGISTRO').values('id_ubicacion__departamento', 'id_ubicacion__distrito').annotate(
             departamento=F('id_ubicacion__departamento'),
             distrito=F('id_ubicacion__distrito'),
-            kit_sentencia=Sum('kit_sentencia'),
-            kit_evento=Sum('kit_evento'),
-            chapas=Sum(F('chapa_fibrocemento_cantidad') + F('chapa_zinc_cantidad'))
         ).order_by('id_ubicacion__departamento', 'id_ubicacion__distrito')
-        
-        return queryset
+
+        return _annotate_total_ayudas(queryset)
 class AsistenciaPorDepartamentoAPIView(generics.ListAPIView):
     """
     Endpoint para ver la asistencia humanitaria por departamento.
@@ -205,14 +175,13 @@ class AsistenciaPorEventoAPIView(generics.ListAPIView):
     filterset_class = HechosAsistenciaHumanitariaFilterSet
 
     def get_queryset(self):
-        return HechosAsistenciaHumanitaria.objects.exclude(id_evento__evento='ELIMINAR_REGISTRO').values(
+        queryset = HechosAsistenciaHumanitaria.objects.exclude(id_evento__evento='ELIMINAR_REGISTRO').values(
             evento=F('id_evento__evento')
         ).annotate(
             numeroOcurrencias=Count('id_evento'),
-            kit_sentencia=Sum('kit_sentencia'),
-            kit_evento=Sum('kit_evento'),
-            chapas=Sum(F('chapa_fibrocemento_cantidad') + F('chapa_zinc_cantidad'))
         ).order_by('-numeroOcurrencias')
+
+        return _annotate_total_ayudas(queryset)
 
 class EventosPorDepartamentoAPIView(generics.ListAPIView):
     """
@@ -227,9 +196,6 @@ class EventosPorDepartamentoAPIView(generics.ListAPIView):
         queryset = HechosAsistenciaHumanitaria.objects.exclude(id_evento__evento='ELIMINAR_REGISTRO').values('id_ubicacion__departamento', 'id_evento__evento').annotate(
             evento=F('id_evento__evento'),
             departamento=F('id_ubicacion__departamento'),
-            kit_sentencia=Sum('kit_sentencia'),
-            kit_evento=Sum('kit_evento'),
-            chapas=Sum(F('chapa_fibrocemento_cantidad') + F('chapa_zinc_cantidad'))
         ).order_by('id_ubicacion__departamento', 'id_evento__evento')
         
         input_busqueda = self.request.query_params.get('inputBusqueda')
@@ -238,22 +204,41 @@ class EventosPorDepartamentoAPIView(generics.ListAPIView):
                 Q(id_ubicacion__departamento__icontains=input_busqueda) |
                 Q(id_evento__evento__icontains=input_busqueda)
             )
-        return queryset
+        return _annotate_total_ayudas(queryset)
 
 @api_view(['GET'])
 def total_asistencia(request):
     """
-    Devuelve un resumen de los totales de kits de sentencia, kits de evento y chapas.
+    Devuelve el total acumulado de todos los campos de ayuda, sin discriminar, 
+    y el registro más reciente por fecha.
     """
-    total_kit_sentencia = HechosAsistenciaHumanitaria.objects.exclude(id_evento__evento='ELIMINAR_REGISTRO').aggregate(total=Sum('kit_sentencia'))['total'] or 0
-    total_kit_evento = HechosAsistenciaHumanitaria.objects.exclude(id_evento__evento='ELIMINAR_REGISTRO').aggregate(total=Sum('kit_evento'))['total'] or 0
-    total_chapas_fibrocemento = HechosAsistenciaHumanitaria.objects.exclude(id_evento__evento='ELIMINAR_REGISTRO').aggregate(total=Sum('chapa_fibrocemento_cantidad'))['total'] or 0
-    total_chapas_zinc = HechosAsistenciaHumanitaria.objects.exclude(id_evento__evento='ELIMINAR_REGISTRO').aggregate(total=Sum('chapa_zinc_cantidad'))['total'] or 0
+    queryset = HechosAsistenciaHumanitaria.objects.exclude(id_evento__evento='ELIMINAR_REGISTRO')
+    
+    # Sumar todos los campos de ayuda
+    totales = queryset.aggregate(
+        total_kit_sentencia=Sum('kit_sentencia'),
+        total_kit_evento=Sum('kit_evento'),
+        total_chapa_fibrocemento=Sum('chapa_fibrocemento_cantidad'),
+        total_chapa_zinc=Sum('chapa_zinc_cantidad'),
+        total_colchones=Sum('colchones_cantidad'),
+        total_frazadas=Sum('frazadas_cantidad'),
+        total_terciadas=Sum('terciadas_cantidad'),
+        total_puntales=Sum('puntales_cantidad'),
+        total_carpas_plasticas=Sum('carpas_plasticas_cantidad'),
+        total_ayudas=Sum('kit_sentencia') + Sum('kit_evento') +
+            Sum('chapa_fibrocemento_cantidad') + Sum('chapa_zinc_cantidad') +
+            Sum('colchones_cantidad') + Sum('frazadas_cantidad') +
+            Sum('terciadas_cantidad') + Sum('puntales_cantidad') +
+            Sum('carpas_plasticas_cantidad')
+    )
+
+    # Obtener el registro más reciente por fecha
+    registro_reciente = queryset.order_by('-id_fecha__fecha').first()
+    fecha_ultima = registro_reciente.id_fecha.fecha if registro_reciente else None
 
     return Response({
-        'total_kit_sentencia': total_kit_sentencia,
-        'total_kit_evento': total_kit_evento,
-        'total_chapas': total_chapas_fibrocemento + total_chapas_zinc
+        **{k: v or 0 for k, v in totales.items()},
+        "fecha_ultima": fecha_ultima
     })
 
 # --- SECCION DE LOS GRAFICOS ---
@@ -278,8 +263,7 @@ class EventosPorLocalidadAPIView(generics.ListAPIView):
         queryset = queryset.annotate(
             numero_eventos=Count('id_evento')
         ).order_by('-numero_eventos')
-        # Devuelve todos los resultados ordenados, el frontend mostrará el top 5
-        return queryset
+        return _annotate_total_ayudas(queryset)
 
 class AsistenciasPorAnioDepartamentoAPIView(generics.ListAPIView):
     """
@@ -523,10 +507,11 @@ class ResumenPorDepartamentoAPIView(generics.ListAPIView):
         queryset = base_queryset.values(
             departamento=F('id_ubicacion__departamento')
         ).annotate(
-            total_kits=Sum('kit_sentencia') + Sum('kit_evento'),
-            total_chapas=Sum('chapa_fibrocemento_cantidad') + Sum('chapa_zinc_cantidad'),
             cantidad_registros=Count('id_asistencia_hum')
         ).order_by('-cantidad_registros')
+
+        # Aplica la anotación de totales ANTES de convertir a lista
+        queryset = _annotate_total_ayudas(queryset)
 
         # Evento más frecuente por departamento
         eventos = base_queryset.values(
@@ -545,3 +530,4 @@ class ResumenPorDepartamentoAPIView(generics.ListAPIView):
         for item in queryset:
             item['evento_mas_frecuente'] = mapa_eventos.get(item.get('departamento'), 'N/A')
         return queryset
+    
