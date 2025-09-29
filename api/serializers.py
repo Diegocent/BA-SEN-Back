@@ -53,7 +53,6 @@ class TotalAyudasSerializer(serializers.Serializer):
     terciadas_cantidad = serializers.IntegerField(required=False)
     puntales_cantidad = serializers.IntegerField(required=False)
     carpas_plasticas_cantidad = serializers.IntegerField(required=False)
-    chapas = serializers.IntegerField(required=False)
     localidad = serializers.CharField(required=False, max_length=100)
     numero_eventos = serializers.IntegerField(required=False)
     numero_asistencias = serializers.IntegerField(required=False)
@@ -84,8 +83,15 @@ class ResumenGeneralSerializer(serializers.Serializer):
 
 class ResumenPorDepartamentoSerializer(serializers.Serializer):
     departamento = serializers.CharField()
-    total_kits = serializers.IntegerField()
-    total_chapas = serializers.IntegerField()
+    kit_sentencia = serializers.IntegerField(required=False)
+    kit_evento = serializers.IntegerField(required=False)
+    chapa_fibrocemento_cantidad = serializers.IntegerField(required=False)
+    chapa_zinc_cantidad = serializers.IntegerField(required=False)
+    colchones_cantidad = serializers.IntegerField(required=False)
+    frazadas_cantidad = serializers.IntegerField(required=False)
+    terciadas_cantidad = serializers.IntegerField(required=False)
+    puntales_cantidad = serializers.IntegerField(required=False)
+    carpas_plasticas_cantidad = serializers.IntegerField(required=False)
     cantidad_registros = serializers.IntegerField()
     evento_mas_frecuente = serializers.CharField()
 

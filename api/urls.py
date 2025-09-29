@@ -1,7 +1,7 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import (
-    AsistenciaDetalladaViewSet,
+    AsistenciaDetalladaAPIView,
     AsistenciaAnualAPIView,
     AsistenciaMensualAPIView,
     AsistenciaPorUbicacionAPIView,
@@ -22,14 +22,10 @@ from .views import (
     ResumenPorDepartamentoAPIView,
 )
 
-# El router se usa para los ViewSets
-router = DefaultRouter()
-router.register(r'detallada', AsistenciaDetalladaViewSet, basename='asistencia-detallada')
+
 
 urlpatterns = [
-    # Rutas para el ViewSet (con paginación y filtros automáticos)
-    path('', include(router.urls)),
-
+    path('detallada/', AsistenciaDetalladaAPIView.as_view(), name='asistencia-detallada'),
     # Rutas para las APIViews
     path('anual/', AsistenciaAnualAPIView.as_view(), name='asistencia-anual'),
     path('mensual/', AsistenciaMensualAPIView.as_view(), name='asistencia-mensual'),
@@ -37,7 +33,6 @@ urlpatterns = [
     path('por-departamento/', AsistenciaPorDepartamentoAPIView.as_view(), name='asistencia-por-departamento'),
     path('por-evento/', AsistenciaPorEventoAPIView.as_view(), name='asistencia-por-evento'),
     path('eventos-por-departamento/', EventosPorDepartamentoAPIView.as_view(), name='eventos-por-departamento'),
-
     # Endpoints adicionales
     path('total/', total_asistencia, name='total-asistencia'),
     path('eventos-por-localidad/', EventosPorLocalidadAPIView.as_view(), name='eventos-por-localidad'),
