@@ -205,6 +205,7 @@ class DataCleaner:
             'Paraguari': 'PARAGUARÍ',
             'Paraguari -  Guaira': 'PARAGUARÍ',
             'PARAGUARI - GUAIRA': 'PARAGUARÍ',
+            'PARAGUARI -  GUAIRA': 'PARAGUARÍ',
 
             # Presidente Hayes
             'PDTE HAYES': 'PDTE. HAYES',
