@@ -5,13 +5,16 @@ from datetime import datetime
 import os
 from pathlib import Path
 
-# Mapeo de meses en español (mayúsculas) para evitar dependencias de locale
+# Mapeo simple de número de mes -> nombre del mes en español.
+# Se usa para llenar la columna `nombre_mes` en `dim_fecha` sin depender
+# de la configuración regional del sistema.
 MONTHS_ES = {
-    1: 'ENERO', 2: 'FEBRERO', 3: 'MARZO', 4: 'ABRIL', 5: 'MAYO', 6: 'JUNIO',
-    7: 'JULIO', 8: 'AGOSTO', 9: 'SEPTIEMBRE', 10: 'OCTUBRE', 11: 'NOVIEMBRE', 12: 'DICIEMBRE'
+    1: 'Enero', 2: 'Febrero', 3: 'Marzo', 4: 'Abril', 5: 'Mayo', 6: 'Junio',
+    7: 'Julio', 8: 'Agosto', 9: 'Septiembre', 10: 'Octubre', 11: 'Noviembre', 12: 'Diciembre'
 }
 
-# Intentar cargar un archivo .env si python-dotenv está instalado
+# Intentar cargar un archivo .env si python-dotenv está disponible.
+# Se buscan `.env` en el directorio del script y en su padre.
 try:
     from dotenv import load_dotenv
     script_dir = Path(__file__).resolve().parent
@@ -22,9 +25,11 @@ try:
             print(f"⚙️ Cargando variables de entorno desde {p}")
             break
 except Exception:
+    # Si python-dotenv no está instalado o ocurre un error, seguimos con las env ya disponibles
     pass
 
-# --- Configuración desde variables de entorno (con valores por defecto) ---
+# Leer credenciales y configuración desde variables de entorno.
+# Si no están definidas, se usan valores por defecto para desarrollo.
 DB_DW_NAME = os.environ.get("DB_DW_NAME", "data_warehouse")
 DB_DW_USER = os.environ.get("DB_DW_USER", "postgres")
 DB_DW_PASS = os.environ.get("DB_DW_PASS", "postgres")
@@ -33,7 +38,7 @@ DB_DW_PORT = os.environ.get("DB_DW_PORT", "5432")
 
 # --- Conexión a la base de datos ---
 def get_db_connection(db_name, db_user, db_password, db_host, db_port):
-    """Establece la conexión a la base de datos."""
+    """Crear una conexión psycopg2 al DW. Devuelve None si falla."""
     try:
         conn = psycopg2.connect(
             dbname=db_name,
@@ -48,9 +53,9 @@ def get_db_connection(db_name, db_user, db_password, db_host, db_port):
         print(f"❌ No se pudo conectar a Data Warehouse: {e}")
         return None
 
-# --- Extracción ---
+# Extracción: carga datos desde un Excel local
 def extract_data_from_excel(file_path="registros_historicos.xlsx", sheet_name="Hoja1"):
-    """Carga los datos desde un archivo Excel local."""
+    """Busca el archivo en el directorio del script (o en su padre) y lee la hoja indicada."""
     path = Path(file_path)
     if not path.exists():
         path = Path(__file__).resolve().parent.parent / file_path
@@ -68,9 +73,9 @@ def extract_data_from_excel(file_path="registros_historicos.xlsx", sheet_name="H
         print(f"❌ Error al leer el archivo Excel: {e}")
         return None
 
-# --- Transformación/Limpieza ---
+# Transformación y limpieza: aplica el pipeline de `DataCleaner`.
 def clean_data(df):
-    """Limpia y estandariza los datos usando el pipeline robusto."""
+    """Estandariza, infiere eventos y prepara los registros para la carga."""
     print("\n🧹 INICIANDO LIMPIEZA Y TRANSFORMACIÓN ROBUSTA...")
     cleaner = DataCleaner()
     
@@ -84,12 +89,12 @@ def clean_data(df):
     return cleaned_records
 
 
-# --- Carga (CORREGIDA PARA ESQUEMA DIMENSIONAL) ---
+# Carga: inserta dimensiones y luego la tabla de hechos siguiendo un esquema dimensional.
 def load_data_to_dw(conn_dw, cleaned_records):
-    """Implementa la lógica de Carga Dimensional (Dimensiones -> Hechos)."""
+    """Inserta/actualiza dimensiones (fecha, evento, ubicación) y carga la tabla de hechos."""
     cursor = conn_dw.cursor()
     
-    # Convertir a DataFrame para simplificar la carga dimensional
+    # Convertir la lista de registros a DataFrame para operaciones de agrupado y lookups
     df_cleaned = pd.DataFrame(cleaned_records)
     
     # 1. TRUNCATE DE LA TABLA DE HECHOS
@@ -102,24 +107,25 @@ def load_data_to_dw(conn_dw, cleaned_records):
         conn_dw.rollback()
         raise e
     
-    # 2. CARGA DE DIMENSIONES (INSERT OR IGNORE/DO NOTHING)
-    print("⏳ Iniciando carga de Dimensiones (Fecha, Evento, Ubicación)...")
+    # 2. CARGA DE DIMENSIONES: fecha, evento y ubicación.
+    print("⏳ Iniciando carga de dimensiones (dim_fecha, dim_evento, dim_ubicacion)...")
 
     # --- DIM_FECHA ---
-    # Convertir las fechas a tipo date para el mapeo con PostgreSQL
+    # Preparar las filas únicas de fecha. `FECHA_DATE` es la representación tipo date
+    # que se usará como clave natural en la dimensión.
     df_cleaned['FECHA_DATE'] = df_cleaned['FECHA'].dt.date 
     df_dates = df_cleaned[['FECHA_DATE', 'AÑO', 'MES', 'FECHA']].drop_duplicates(subset=['FECHA_DATE'])
     
     for index, row in df_dates.iterrows():
         try:
             date_obj = row['FECHA']
-            # Usar el mapeo en español para el nombre del mes (evita problemas de locale)
+            # Obtener número de mes desde el objeto datetime; si falla dejamos None.
             try:
                 mes_num = int(date_obj.month)
             except Exception:
-                # Si no es un datetime válido, caer de vuelta al formato por defecto
                 mes_num = None
 
+            # Usar el mapeo en español; si no se encuentra, cae en un fallback seguro.
             nombre_mes = MONTHS_ES.get(mes_num, date_obj.strftime("%B").upper() if mes_num else 'SIN ESPECIFICAR')
             
             insert_query = """
@@ -157,16 +163,16 @@ def load_data_to_dw(conn_dw, cleaned_records):
     print("✅ Carga de dimensiones completada.")
 
 
-    # 3. CARGA DE HECHOS (LOOKUP + INSERT)
-    print("⏳ Iniciando carga de Tabla de Hechos (hechos_asistencia_humanitaria)...")
+    # 3. CARGA DE HECHOS: resolver FK mediante lookups en memoria e insertar filas.
+    print("⏳ Iniciando carga de la tabla de hechos (hechos_asistencia_humanitaria)...")
     registros_cargados = 0
     
-    # Pre-cargar Lookups en memoria
-    # Usamos read_sql que requiere 'import pandas as pd'
+    # Pre-cargar lookups (dim_fecha, dim_evento, dim_ubicacion) en memoria para acelerar inserts.
+    # read_sql devuelve DataFrame, por eso se usa pandas aquí.
     dim_fecha_map = pd.read_sql("SELECT id_fecha, fecha FROM dim_fecha", conn_dw).set_index('fecha')['id_fecha'].to_dict()
     dim_evento_map = pd.read_sql("SELECT id_evento, evento FROM dim_evento", conn_dw).set_index('evento')['id_evento'].to_dict()
     
-    # Lookup de ubicación (combinando las claves naturales)
+    # Lookup de ubicación: construir una clave natural concatenada departamento|distrito|localidad
     dim_ubicacion_map_df = pd.read_sql("SELECT id_ubicacion, departamento, distrito, localidad FROM dim_ubicacion", conn_dw)
     dim_ubicacion_map_df['key'] = dim_ubicacion_map_df['departamento'] + '|' + dim_ubicacion_map_df['distrito'] + '|' + dim_ubicacion_map_df['localidad']
     dim_ubicacion_lookup = dim_ubicacion_map_df.set_index('key')['id_ubicacion'].to_dict()
@@ -180,21 +186,32 @@ def load_data_to_dw(conn_dw, cleaned_records):
         ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
     """
     
+    # Iterar registros limpios y encolar inserts en la tabla de hechos
     for rec in df_cleaned.to_dict('records'):
         try:
-            # Lookup de ID's
+            # Resolver IDs usando los mapas precargados
             id_fecha = dim_fecha_map.get(rec['FECHA'].to_pydatetime().date())
             id_evento = dim_evento_map.get(rec['EVENTO'])
             ubicacion_key = rec['DEPARTAMENTO'] + '|' + rec['DISTRITO'] + '|' + rec['LOCALIDAD']
             id_ubicacion = dim_ubicacion_lookup.get(ubicacion_key)
 
-            # Mapeo de KIT_A/KIT_B a kit_sentencia/kit_evento
-            # Asumiendo: KIT_A -> kit_sentencia, KIT_B -> kit_evento
-            kit_sentencia = rec.get('KIT_A')
-            kit_evento = rec.get('KIT_B')
+            # Sumar las cantidades de kits de los campos KIT_A y KIT_B (ya limpiados y en el DF)
+            # Asumimos que si no están presentes, son 0. KIT_A y KIT_B ya contienen enteros limpios.
+            kit_a_qty = rec.get('KIT_A', 0)
+            kit_b_qty = rec.get('KIT_B', 0)
+            total_kits = kit_a_qty + kit_b_qty
             
+            # Aplicar la regla: kit_sentencia SOLO si el EVENTO es C.I.D.H.
+            if rec.get('EVENTO') == 'C.I.D.H.':
+                kit_sentencia = total_kits
+                kit_evento = 0
+            else:
+                kit_sentencia = 0
+                kit_evento = total_kits
+
+            # Insertar solo si se pudieron resolver las 3 FK necesarias
             if id_fecha and id_evento and id_ubicacion:
-                 cursor.execute(
+                cursor.execute(
                     insert_query_fact,
                     (
                         id_fecha, id_ubicacion, id_evento, 
@@ -203,10 +220,10 @@ def load_data_to_dw(conn_dw, cleaned_records):
                         rec.get('TERCIADAS'), rec.get('PUNTALES'), rec.get('CARPAS_PLASTICAS')
                     )
                 )
-                 registros_cargados += 1
-            
+                registros_cargados += 1
+
         except Exception as e:
-            # Manejar errores de un registro específico
+            # Manejar errores por registro: se hace rollback para ese registro y seguimos
             print(f"❌ Error al cargar registro en Hechos (Depto: {rec.get('DEPARTAMENTO')}, Evento: {rec.get('EVENTO')}): {e}")
             conn_dw.rollback()
     

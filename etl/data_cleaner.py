@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""DataCleaner para ETL - Alineado con la Corrección Completa de Estandarización"""
+"""Pipeline de limpieza y estandarización para el ETL.
+
+Contiene reglas y utilidades para normalizar departamentos, eventos y
+cantidades antes de cargar los datos al Data Warehouse.
+"""
 
 import pandas as pd
 import numpy as np
@@ -11,16 +15,16 @@ warnings.filterwarnings('ignore')
 
 class DataCleaner:
     def __init__(self):
-        # Campos de ayuda originales (kit_a y kit_b) - MANTENER POR CONSISTENCIA
+        # Nombres históricos de campos (compatibilidad con datasets antiguos)
         self.original_kit_fields = ['kit_a', 'kit_b']
 
-        # Campos de ayuda finales - MANTENER POR CONSISTENCIA
+        # Campos estándar que pueden aparecer o ser generados por el pipeline
         self.aid_fields = [
             'kit_eventos', 'kit_sentencia', 'chapa_fibrocemento', 'chapa_zinc',
             'colchones', 'frazadas', 'terciadas', 'puntales', 'carpas_plasticas'
         ]
 
-        # Orden explícito de departamentos (1-18)
+    # Orden numérico de departamentos (clave para reportes/ordenamiento)
         self.departamento_orden = {
             'CONCEPCIÓN': 1, 'SAN PEDRO': 2, 'CORDILLERA': 3, 'GUAIRÁ': 4,
             'CAAGUAZÚ': 5, 'CAAZAPÁ': 6, 'ITAPÚA': 7, 'MISIONES': 8,
@@ -29,7 +33,8 @@ class DataCleaner:
             'ALTO PARAGUAY': 17, 'CAPITAL': 18
         }
 
-        # DICCIONARIO COMPLETO Y CORREGIDO DE DEPARTAMENTOS
+    # Diccionario de normalización de nombres de departamentos.
+    # Mapea variantes y errores comunes a un nombre estándar.
         self.estandarizacion_dept = {
             # Limpieza de variantes
             'ÑEEMBUCU': 'ÑEEMBUCÚ', 'ÑEEMBUCÙ': 'ÑEEMBUCÚ', 'ÑEMBUCU': 'ÑEEMBUCÚ',
@@ -113,8 +118,9 @@ class DataCleaner:
             'ALTO PARAGUAY': 'ALTO PARAGUAY', 'AMAMBAY': 'AMAMBAY', 'CAPITAL': 'CAPITAL'
         }
 
-        # DICCIONARIO DE EVENTOS CORREGIDO
-        self.estandarizacion_eventos = {
+    # Diccionario de normalización de eventos.
+    # Algunas entradas indican que el registro debe eliminarse (p. ej. preposicionamiento).
+    self.estandarizacion_eventos = {
             # COVID
             'ALB.COVID': 'COVID', 'ALBER.COVID': 'COVID', 'ALBERG.COVID': 'COVID',
             'COVI 19 OLL.': 'COVID', 'COVID 19': 'COVID', 'COVI': 'COVID',
@@ -192,15 +198,22 @@ class DataCleaner:
         }
 
     def limpiar_texto(self, texto):
-        """Limpieza básica de texto"""
+        """Normaliza un campo de texto: trim, mayúsculas y valor por defecto.
+
+        Devuelve 'SIN ESPECIFICAR' si el valor es nulo o vacío.
+        """
         if pd.isna(texto) or texto is None or str(texto).strip() == '':
             return 'SIN ESPECIFICAR'
         return str(texto).strip().upper()
 
     def limpiar_numero(self, value):
-        """Convierte valores a enteros"""
+        """Convierte a entero de forma segura.
+
+        Acepta strings con coma o punto decimales. Devuelve 0 si no se puede
+        parsear.
+        """
         try:
-            # Reemplaza comas por puntos si están presentes, luego convierte
+            # Aceptar cadenas como '1,5' o '1.5'
             if isinstance(value, str):
                 value = value.replace(',', '.')
             return int(float(value)) if value not in [None, '', np.nan] else 0
@@ -208,7 +221,14 @@ class DataCleaner:
             return 0
 
     def estandarizar_departamento_robusto(self, departamento):
-        """ESTANDARIZACIÓN ROBUSTA DE DEPARTAMENTOS (Alineada al script funcional)"""
+        """Normaliza el nombre de departamento con varias heurísticas.
+
+        Reglas aplicadas, en orden:
+        1) Lookup directo en el diccionario de correcciones.
+        2) Si contiene separadores, toma la primera parte y vuelve a buscar.
+        3) Busca coincidencias parciales con los nombres válidos.
+        4) Si no se identifica, devuelve 'CENTRAL' por defecto.
+        """
         if pd.isna(departamento) or departamento is None:
             return 'CENTRAL'
 
@@ -218,35 +238,38 @@ class DataCleaner:
         if depto_limpio in self.estandarizacion_dept:
             return self.estandarizacion_dept[depto_limpio]
 
-        # 2. Búsqueda con limpieza de separadores (toma la primera parte)
+        # 2. Si contiene separadores, probar con la primera parte
         for sep in [' - ', ' / ', ', ', ' Y ']:
             if sep in depto_limpio:
                 primera_parte = depto_limpio.split(sep)[0].strip()
                 if primera_parte in self.estandarizacion_dept:
                     return self.estandarizacion_dept[primera_parte]
 
-        # 3. Búsqueda por palabras clave (ej: Capital en el nombre)
+        # 3. Coincidencia parcial con nombres válidos
         for depto_estandar in self.departamento_orden.keys():
             if depto_estandar in depto_limpio:
                 return depto_estandar
 
-        # 4. Si no se encuentra, usar CENTRAL por defecto
-        # print(f"⚠️ Departamento no encontrado: '{depto_limpio}' -> asignando CENTRAL")
+        # 4. Fallback por defecto
         return 'CENTRAL'
 
 
     def estandarizar_evento_robusto(self, evento):
-        """ESTANDARIZACIÓN ROBUSTA DE EVENTOS (Alineada al script funcional)"""
+        """Normaliza el campo 'EVENTO'.
+
+        Intenta un lookup directo y, si falla, busca palabras clave que indiquen
+        la categoría. Si no encuentra nada, devuelve 'SIN EVENTO'.
+        """
         if pd.isna(evento) or evento is None:
             return 'SIN EVENTO'
 
         evento_limpio = self.limpiar_texto(evento)
 
-        # 1. Búsqueda directa en el diccionario
+        # 1. Lookup directo
         if evento_limpio in self.estandarizacion_eventos:
             return self.estandarizacion_eventos[evento_limpio]
 
-        # 2. Búsqueda por palabras clave (similar a la lógica interna del script funcional)
+        # 2. Búsqueda por palabras clave (heurística rápida)
         palabras_clave = {
             'COVID': 'COVID', 'INCENDIO': 'INCENDIO', 'TORMENTA': 'TORMENTA SEVERA',
             'TEMPORAL': 'TORMENTA SEVERA', 'INUNDACION': 'INUNDACION',
@@ -259,12 +282,17 @@ class DataCleaner:
             if palabra in evento_limpio:
                 return evento_estandar
 
-        # 3. Si no se encuentra, usar OTROS
-        return 'OTROS'
+        # 3. Sin coincidencias: marcar como sin evento
+        return 'SIN EVENTO'
 
 
     def post_process_eventos_with_aids(self, row):
-        """Lógica de inferencia de eventos basada en insumos (Alineada al script funcional)"""
+        """Inferencia de evento a partir de insumos y contexto de la fila.
+
+        Aplica reglas heurísticas (kits, chapas, departamento) para inferir
+        un 'EVENTO' cuando no viene especificado. Devuelve 'ELIMINAR_REGISTRO'
+        para registros que deben descartarse (p. ej. preposicionamiento).
+        """
         evento = row.get('EVENTO', 'SIN EVENTO')
 
         # Si es preposicionamiento, lo eliminamos
@@ -293,43 +321,63 @@ class DataCleaner:
                 'CHAPA FIBROCEMENTO', 'CHAPA_FIBROCEMENTO', 'CHAPA ZINC', 'CHAPA_ZINC',
                 'COLCHONES', 'FRAZADAS', 'TERCIADAS', 'PUNTALES', 'CARPAS PLASTICAS', 'CARPAS_PLASTICAS'
             ]
-            materiales = sum(self.limpiar_numero(row.get(field, 0)) for field in materiales_cols)
+            
+            # Nota: Usamos la suma total de *todos* los insumos, incluyendo kits y materiales para la lógica
+            # Esto es clave para las reglas de inferencia.
+            materiales_no_kits_cols = [
+                'CHAPA FIBROCEMENTO', 'CHAPA_FIBROCEMENTO', 'CHAPA ZINC', 'CHAPA_ZINC',
+                'COLCHONES', 'FRAZADAS', 'TERCIADAS', 'PUNTALES', 'CARPAS PLASTICAS', 'CARPAS_PLASTICAS'
+            ]
+            materiales = sum(self.limpiar_numero(row.get(field, 0)) for field in materiales_no_kits_cols)
+            total_insumos = total_kits + materiales
 
-            # Regla 2: si hay materiales > 0 y pocos kits -> INCENDIO
-            # Nota: la regla original del script funcional es: total_kits < 10 and total_kits > 0 and materiales > 0
-            # Si el registro tiene un kit (y materiales), es probable que no sea INCENDIO,
-            # pero mantendremos la lógica EXACTA del script funcional que funciona.
+            # Regla 2: pocos kits pero hay materiales -> INCENDIO
+            # (0 < total_kits < 10 y materiales > 0)
             if total_kits < 10 and total_kits > 0 and materiales > 0:
                 return 'INCENDIO'
 
-            # Regla 4: capital con solo kits -> INUNDACION
+            # Regla 4: en CAPITAL, solo kits (sin materiales) -> INUNDACION
             if departamento == 'CAPITAL' and total_kits > 0 and materiales == 0:
                 return 'INUNDACION'
 
-            # Regla 5: solo chapa_zinc -> TORMENTA SEVERA
+            # Regla 5: solo chapa_zinc presente -> TORMENTA SEVERA
+            # La condición `materiales == chapa_zinc` asegura que solo hay ese material.
             if chapa_zinc > 0 and total_kits == 0 and chapa_fibrocemento == 0 and materiales == chapa_zinc:
                 return 'TORMENTA SEVERA'
 
-            # Regla 6: solo chapa_fibrocemento -> INUNDACION
+            # Regla 6: solo chapa_fibrocemento presente -> INUNDACION
+            # La condición `materiales == chapa_fibrocemento` asegura que solo hay ese material.
             if chapa_fibrocemento > 0 and total_kits == 0 and chapa_zinc == 0 and materiales == chapa_fibrocemento:
                 return 'INUNDACION'
 
-            # Regla 7: si tiene kits -> EXTREMA VULNERABILIDAD
+            # Regla 7: si hay kits -> EXTREMA VULNERABILIDAD
             if total_kits > 0:
                 return 'EXTREMA VULNERABILIDAD'
             
+            # Si llegó aquí, no tenía evento, no cumplió ninguna regla de inferencia
+            # y no tenía kits, ni materiales, o solo tenía materiales pero no Kits/Chapas específicas.
+            # En el script original, el valor final para estos casos sin evento/insumos es 'EXTREMA VULNERABILIDAD'.
+            # Sin embargo, la lógica de negocio exige que si no hay insumos se elimine.
+            # Aquí lo marcamos como 'SIN_INSUMOS' para el paso de eliminación final.
+            if total_insumos == 0:
+                return 'SIN_INSUMOS'
+
             return 'EXTREMA VULNERABILIDAD'
 
         return evento
 
     def run_complete_correction_pipeline(self, df):
-        """
-        PIP ELINE COMPLETO Y CORREGIDO
-        Realiza la estandarización robusta, inferencia y limpieza final.
+        """Ejecuta todo el pipeline de corrección sobre un DataFrame.
+
+        Pasos principales:
+        1) Normaliza nombres de columnas.
+        2) Estandariza departamentos y eventos.
+        3) Infere eventos a partir de insumos y limpia registros inválidos.
+        4) Genera features básicos y asegura el esquema final.
         """
         print("🎯 Aplicando estandarización robusta de DEPARTAMENTO y EVENTO...")
 
-        # Renombrar columnas a mayúsculas para asegurar consistencia
+        # Normalizar nombres de columnas a MAYÚSCULAS con guiones bajos
         df.columns = [col.upper().replace(' ', '_') for col in df.columns]
 
         # 1. Estandarizar departamentos
@@ -340,31 +388,87 @@ class DataCleaner:
         if 'EVENTO' in df.columns:
             df['EVENTO'] = df['EVENTO'].apply(self.estandarizar_evento_robusto)
 
-        # 3. Aplicar tu lógica de inferencia de eventos y limpieza de kits
+        # 3. Inferir eventos y limpiar filas según reglas de insumos
         print("🔍 Aplicando inferencia de eventos basada en recursos...")
-        # Nota: iterrows es lento, pero es necesario para la lógica de post_process
         eventos_inferidos = 0
+        
+    # Preparar columnas numéricas temporales para evitar parseos repetidos
+        
+    # Lista de columnas de insumos que se usarán en la inferencia
+        insumos_cols_map = {
+            'KIT_A': 'KIT_A', 'KIT_B': 'KIT_B',
+            'CHAPA_FIBROCEMENTO': 'CHAPA_FIBROCEMENTO', 'CHAPA_ZINC': 'CHAPA_ZINC',
+            'COLCHONES': 'COLCHONES', 'FRAZADAS': 'FRAZADAS', 
+            'TERCIADAS': 'TERCIADAS', 'PUNTALES': 'PUNTALES', 'CARPAS_PLASTICAS': 'CARPAS_PLASTICAS'
+        }
+        
+        # Mapear las columnas originales a los nombres estandarizados
+        temp_col_map = {}
+        for final_col, _ in insumos_cols_map.items():
+            # Buscar la columna en las columnas del DF
+            found_col = next((col for col in df.columns if col == final_col), None)
+            if found_col:
+                df[f'{final_col}_TEMP'] = df[found_col].apply(self.limpiar_numero)
+                temp_col_map[final_col] = f'{final_col}_TEMP'
+            else:
+                # Si no existe, crearla como 0 para el cálculo
+                df[f'{final_col}_TEMP'] = 0
+                temp_col_map[final_col] = f'{final_col}_TEMP'
+
+
+    # Re-iterar por fila aplicando la lógica de inferencia (usa las columnas _TEMP)
         for idx, row in df.iterrows():
+            # Construir un dict temporal con las columnas clave para el post-procesamiento
+            temp_row = row.to_dict()
+            for final_col, temp_col in temp_col_map.items():
+                temp_row[final_col.replace('_', ' ')] = row[temp_col] # Necesario para la función
+            
+            # Pasar la fila con las columnas limpias a la función
             evento_original = row['EVENTO']
-            evento_inferido = self.post_process_eventos_with_aids(row)
+            evento_inferido = self.post_process_eventos_with_aids(temp_row)
+            
             if evento_original != evento_inferido:
                 eventos_inferidos += 1
                 df.at[idx, 'EVENTO'] = evento_inferido
         
-        # Eliminar los registros marcados
-        registros_antes = len(df)
-        df = df[df['EVENTO'] != 'ELIMINAR_REGISTRO']
-        registros_eliminados = registros_antes - len(df)
-        print(f"   Registros eliminados (PREPOSICIONAMIENTO/Otros): {registros_eliminados:,}")
+        # Eliminar columnas temporales
+        cols_to_drop = [f'{col}_TEMP' for col in insumos_cols_map.keys() if f'{col}_TEMP' in df.columns]
+        df = df.drop(columns=cols_to_drop, errors='ignore')
 
-        # 4. Feature Engineering
+        # 4. Eliminar registros marcados (preposicionamiento) y aquellos sin insumos
+        registros_antes = len(df)
+
+        # Realizar la limpieza de números en las columnas de insumos para el cálculo total
+        for col in insumos_cols_map.keys():
+            df[col] = df.get(col, pd.Series([0] * len(df), index=df.index)).apply(self.limpiar_numero)
+
+        # Calcular el total de insumos
+        insumo_cols = list(insumos_cols_map.keys())
+        df['TOTAL_INSUMOS'] = df[insumo_cols].sum(axis=1)
+
+        # 4a. Eliminar ELIMINAR_REGISTRO (Preposicionamiento)
+        df_limpio = df[df['EVENTO'] != 'ELIMINAR_REGISTRO'].copy()
+        registros_eliminados_prepos = len(df) - len(df_limpio)
+
+        # 4b. Eliminar registros sin insumos
+        df_limpio = df_limpio[df_limpio['TOTAL_INSUMOS'] > 0]
+        registros_eliminados_cero = registros_antes - registros_eliminados_prepos - len(df_limpio)
+
+        df = df_limpio.drop(columns=['TOTAL_INSUMOS'], errors='ignore')
+
+        print(f"   Registros eliminados (Preposicionamiento): {registros_eliminados_prepos:,}")
+        print(f"   Registros eliminados (Sin insumos): {registros_eliminados_cero:,}")
+        print(f"   Registros restantes: {len(df):,}")
+
+        # 5. Generar columnas derivadas (AÑO, MES, ORDEN_DEPARTAMENTO, ...)
         df = self.feature_engineering_basico(df)
 
-        # 5. Estandarización final de columnas (necesario para la carga en DW)
+        # 6. Asegurar esquema y tipos para la carga en el DW
         df = self.estandarizacion_final_columnas(df)
 
         return df
 
+    # ... (feature_engineering_basico, estandarizacion_final_columnas y verificacion_final se mantienen iguales)
     def feature_engineering_basico(self, df):
         """Feature engineering básico (Alineado con tu archivo original)"""
         # print("⚙️ Aplicando feature engineering...")
