@@ -90,7 +90,7 @@ class DataCleaner:
 
             'PARAGUARI': 'PARAGUARÍ', 'PARAGUARI PARAGUARI': 'PARAGUARÍ',
             'PARAGUARÌ': 'PARAGUARÍ', 'Paraguari': 'PARAGUARÍ', 'PARAGUARÍ': 'PARAGUARÍ',
-            'PARAGUARI - GUAIRA': 'PARAGUARÍ', 'Paraguari -  Guaira': 'PARAGUARÍ',
+            'PARAGUARI - GUAIRA': 'PARAGUARÍ', 'Paraguari - Guaira': 'PARAGUARÍ',
             'PARAGUARI - GUAIRA': 'PARAGUARÍ',
 
             'PDTE HAYES': 'PDTE. HAYES', 'PDTE HAYES S.PIRI-4 DE MAYO': 'PDTE. HAYES',
@@ -456,9 +456,9 @@ class DataCleaner:
 
         df = df_limpio.drop(columns=['TOTAL_INSUMOS'], errors='ignore')
 
-        print(f"   Registros eliminados (Preposicionamiento): {registros_eliminados_prepos:,}")
-        print(f"   Registros eliminados (Sin insumos): {registros_eliminados_cero:,}")
-        print(f"   Registros restantes: {len(df):,}")
+        print(f"  Registros eliminados (Preposicionamiento): {registros_eliminados_prepos:,}")
+        print(f"  Registros eliminados (Sin insumos): {registros_eliminados_cero:,}")
+        print(f"  Registros restantes: {len(df):,}")
 
         # 5. Generar columnas derivadas (AÑO, MES, ORDEN_DEPARTAMENTO, ...)
         df = self.feature_engineering_basico(df)
@@ -559,6 +559,6 @@ class DataCleaner:
             print(f"\n✅ EVENTOS FINALES: {len(eventos_finales)}")
             print("📊 Distribución Top 10:")
             for evento, count in eventos_finales.head(10).items():
-                print(f"   - {evento}: {count}")
+                print(f"  - {evento}: {count}")
 
         return df # Devuelve el DF para encadenamiento si es necesario
