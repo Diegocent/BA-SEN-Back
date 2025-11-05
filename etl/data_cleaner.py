@@ -605,6 +605,13 @@ class DataCleaner:
 
         cambios = 0
 
+        # Preparar conjunto de claves normalizadas de distritos para comparaciones rápidas
+        distrito_norm_keys = set()
+        distrito_norm_keys.update(self.distrito_a_departamento_norm.keys())
+        distrito_norm_keys.update(self.distrito_canonical_map.keys())
+        if hasattr(self, 'estandarizacion_distrito_norm'):
+            distrito_norm_keys.update(self.estandarizacion_distrito_norm.keys())
+
         for idx, row in df.iterrows():
             localidad = row.get('LOCALIDAD', '')
             distrito = row.get('DISTRITO', '')
@@ -672,6 +679,31 @@ class DataCleaner:
                     # Asegurar que DISTRITO tenga la forma canónica
                     df.at[idx, 'DISTRITO'] = self.distrito_canonical_map.get(dist_norm, dist_limpia)
                     cambios += 1
+
+            # 4) Si la LOCALIDAD contiene el nombre de un DISTRITO (es decir, el
+            # registrador escribió el distrito en el campo LOCALIDAD), entonces
+            # considerarlo como no especificado para LOCALIDAD y dejar 'SIN ESPECIFICAR'.
+            # Esto evita duplicar el mismo nombre como localidad y distrito.
+            try:
+                if loc_limpia not in ['SIN ESPECIFICAR', '']:
+                    # Si la localidad normalizada coincide exactamente con un distrito
+                    # conocido, o contiene su nombre (casos como 'ASUNCIÓN - BARRIO'),
+                    # marcar como no especificada.
+                    matched = False
+                    if loc_norm in distrito_norm_keys:
+                        matched = True
+                    else:
+                        for kdist in distrito_norm_keys:
+                            if kdist and kdist in loc_norm:
+                                matched = True
+                                break
+
+                    if matched:
+                        df.at[idx, 'LOCALIDAD'] = 'SIN ESPECIFICAR'
+                        cambios += 1
+            except Exception:
+                # No queremos que una excepción aquí rompa la normalización global
+                pass
 
         if cambios > 0:
             print(f"  Normalización de ubicaciones aplicada. Cambios realizados: {cambios}")
