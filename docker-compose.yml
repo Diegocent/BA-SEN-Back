@@ -6,7 +6,7 @@ services:
       context: .
     container_name: backend
     ports:
-      - "8000:8000"
+      - "5088:8000"
     volumes:
       - .:/app
     environment:
@@ -15,7 +15,7 @@ services:
 
   frontend:
     build:
-      context: ../businessAnalitycs
+      context: ../BA-SEN-Front
     container_name: frontend
     ports:
       - "3227:80"
