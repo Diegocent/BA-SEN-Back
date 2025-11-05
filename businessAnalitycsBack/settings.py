@@ -13,7 +13,9 @@ SECRET_KEY = 'tu_clave_secreta_aqui'
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+# ALLOWED_HOSTS: leer desde la variable de entorno DJANGO_ALLOWED_HOSTS
+_hosts = os.environ.get('DJANGO_ALLOWED_HOSTS', '161.35.53.140,127.0.0.1,localhost')
+ALLOWED_HOSTS = [h.strip() for h in _hosts.split(',') if h.strip()]
 
 
 # Application definition

@@ -12,6 +12,8 @@ services:
     environment:
       - PYTHONDONTWRITEBYTECODE=1
       - PYTHONUNBUFFERED=1
+      # Hosts permitidos para Django (sin puerto). Ajusta según tu IP/dominios.
+      - DJANGO_ALLOWED_HOSTS=161.35.53.140,localhost,127.0.0.1
 
   frontend:
     build:
