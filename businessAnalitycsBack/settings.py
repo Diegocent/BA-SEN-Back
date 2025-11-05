@@ -46,6 +46,8 @@ CORS_ALLOWED_ORIGINS = [
     "http://192.168.100.101:5173",
     "http://localhost:5173",
     "http://localhost:3227",
+    "http://161.35.53.140:3227",
+    "http://161.35.53.140",
 ]
 
 ROOT_URLCONF = 'businessAnalitycsBack.urls'
