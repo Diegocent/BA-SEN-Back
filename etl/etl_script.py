@@ -54,7 +54,7 @@ def get_db_connection(db_name, db_user, db_password, db_host, db_port):
         return None
 
 # Extracción: carga datos desde un Excel local
-def extract_data_from_excel(file_path="registros_historicos.xlsx", sheet_name="Hoja1"):
+def extract_data_from_excel(file_path="registros_historicos.xlsx", sheet_name="Hoja 1"):
     """Busca el archivo en el directorio del script (o en su padre) y lee la hoja indicada."""
     path = Path(file_path)
     if not path.exists():
@@ -96,6 +96,10 @@ def load_data_to_dw(conn_dw, cleaned_records):
     
     # Convertir la lista de registros a DataFrame para operaciones de agrupado y lookups
     df_cleaned = pd.DataFrame(cleaned_records)
+    # Asegurar que las columnas de ubicación y evento sean strings limpias y consistentes
+    for c in ['DEPARTAMENTO', 'DISTRITO', 'LOCALIDAD', 'EVENTO']:
+        if c in df_cleaned.columns:
+            df_cleaned[c] = df_cleaned[c].fillna('SIN ESPECIFICAR').astype(str).str.strip().str.upper()
     
     # 1. TRUNCATE DE LA TABLA DE HECHOS
     try:
@@ -135,7 +139,26 @@ def load_data_to_dw(conn_dw, cleaned_records):
             """
             cursor.execute(insert_query, (row['FECHA_DATE'], row['AÑO'], row['MES'], nombre_mes, date_obj.day))
         except Exception as e:
+            # Log del error para diagnóstico (no detener todo el proceso)
             conn_dw.rollback()
+            print(f"❌ Error insertando dim_fecha para FECHA={row.get('FECHA_DATE')}: {e}")
+            # Continuar con las demás filas
+            pass
+    # Commit parcial después de intentar insertar todas las fechas
+    conn_dw.commit()
+
+    # Diagnóstico: cuántas fechas únicas intentamos insertar vs cuántas quedaron en la tabla
+    try:
+        df_dim_fecha_check = pd.read_sql("SELECT fecha FROM dim_fecha", conn_dw)
+        df_dim_fecha_check['fecha'] = pd.to_datetime(df_dim_fecha_check['fecha']).dt.date
+        fechas_insertadas_db = set(df_dim_fecha_check['fecha'].tolist())
+        fechas_intentadas = set(df_dates['FECHA_DATE'].dropna().tolist())
+        fechas_faltantes = sorted(list(fechas_intentadas - fechas_insertadas_db))
+        print(f"  Fechas únicas intentadas: {len(fechas_intentadas)}; Fechas en dim_fecha: {len(fechas_insertadas_db)}")
+        if fechas_faltantes:
+            print(f"  Ejemplos de fechas intentadas que NO están en dim_fecha (hasta 20): {fechas_faltantes[:20]}")
+    except Exception:
+        pass
             
     # --- DIM_EVENTO ---
     df_events = df_cleaned[['EVENTO']].drop_duplicates()
@@ -166,16 +189,36 @@ def load_data_to_dw(conn_dw, cleaned_records):
     # 3. CARGA DE HECHOS: resolver FK mediante lookups en memoria e insertar filas.
     print("⏳ Iniciando carga de la tabla de hechos (hechos_asistencia_humanitaria)...")
     registros_cargados = 0
+    missing_fecha = 0
+    missing_evento = 0
+    missing_ubicacion = 0
+    missing_ubicacion_keys = {}
     
     # Pre-cargar lookups (dim_fecha, dim_evento, dim_ubicacion) en memoria para acelerar inserts.
     # read_sql devuelve DataFrame, por eso se usa pandas aquí.
-    dim_fecha_map = pd.read_sql("SELECT id_fecha, fecha FROM dim_fecha", conn_dw).set_index('fecha')['id_fecha'].to_dict()
-    dim_evento_map = pd.read_sql("SELECT id_evento, evento FROM dim_evento", conn_dw).set_index('evento')['id_evento'].to_dict()
+    df_dim_fecha = pd.read_sql("SELECT id_fecha, fecha FROM dim_fecha", conn_dw)
+    # Asegurar que las claves sean objetos date (sin componente horaria) para matching
+    if 'fecha' in df_dim_fecha.columns:
+        df_dim_fecha['fecha'] = pd.to_datetime(df_dim_fecha['fecha']).dt.date
+    dim_fecha_map = df_dim_fecha.set_index('fecha')['id_fecha'].to_dict()
+    df_dim_evento = pd.read_sql("SELECT id_evento, evento FROM dim_evento", conn_dw)
+    if 'evento' in df_dim_evento.columns:
+        df_dim_evento['evento'] = df_dim_evento['evento'].fillna('SIN ESPECIFICAR').astype(str).str.strip().str.upper()
+    dim_evento_map = df_dim_evento.set_index('evento')['id_evento'].to_dict()
     
     # Lookup de ubicación: construir una clave natural concatenada departamento|distrito|localidad
     dim_ubicacion_map_df = pd.read_sql("SELECT id_ubicacion, departamento, distrito, localidad FROM dim_ubicacion", conn_dw)
+    # Normalizar campos leídos desde la dimensión para asegurar coincidencia
+    for c in ['departamento', 'distrito', 'localidad']:
+        if c in dim_ubicacion_map_df.columns:
+            dim_ubicacion_map_df[c] = dim_ubicacion_map_df[c].fillna('SIN ESPECIFICAR').astype(str).str.strip().str.upper()
     dim_ubicacion_map_df['key'] = dim_ubicacion_map_df['departamento'] + '|' + dim_ubicacion_map_df['distrito'] + '|' + dim_ubicacion_map_df['localidad']
     dim_ubicacion_lookup = dim_ubicacion_map_df.set_index('key')['id_ubicacion'].to_dict()
+    # Mapa secundario por (departamento, distrito) para fallback si localidad no coincide
+    try:
+        dim_ubicacion_by_dept_dist = dim_ubicacion_map_df.set_index(['departamento', 'distrito'])['id_ubicacion'].to_dict()
+    except Exception:
+        dim_ubicacion_by_dept_dist = {}
     
     insert_query_fact = """
         INSERT INTO hechos_asistencia_humanitaria (
@@ -190,10 +233,27 @@ def load_data_to_dw(conn_dw, cleaned_records):
     for rec in df_cleaned.to_dict('records'):
         try:
             # Resolver IDs usando los mapas precargados
-            id_fecha = dim_fecha_map.get(rec['FECHA'].to_pydatetime().date())
+            # Resolver la fecha del registro de manera robusta (acepta Timestamp, datetime, date o str)
+            rec_fecha_raw = rec.get('FECHA')
+            rec_fecha = None
+            try:
+                if hasattr(rec_fecha_raw, 'to_pydatetime'):
+                    rec_fecha = rec_fecha_raw.to_pydatetime().date()
+                elif isinstance(rec_fecha_raw, datetime):
+                    rec_fecha = rec_fecha_raw.date()
+                else:
+                    rec_fecha = pd.to_datetime(rec_fecha_raw).date()
+            except Exception:
+                rec_fecha = None
+
+            id_fecha = dim_fecha_map.get(rec_fecha)
             id_evento = dim_evento_map.get(rec['EVENTO'])
             ubicacion_key = rec['DEPARTAMENTO'] + '|' + rec['DISTRITO'] + '|' + rec['LOCALIDAD']
             id_ubicacion = dim_ubicacion_lookup.get(ubicacion_key)
+            # Fallback: si no hay match por localidad, intentar por (departamento, distrito)
+            if not id_ubicacion:
+                dept_key = (str(rec.get('DEPARTAMENTO', '')).strip().upper(), str(rec.get('DISTRITO', '')).strip().upper())
+                id_ubicacion = dim_ubicacion_by_dept_dist.get(dept_key)
 
             # Sumar las cantidades de kits de los campos KIT_A y KIT_B (ya limpiados y en el DF)
             # Asumimos que si no están presentes, son 0. KIT_A y KIT_B ya contienen enteros limpios.
@@ -221,6 +281,16 @@ def load_data_to_dw(conn_dw, cleaned_records):
                     )
                 )
                 registros_cargados += 1
+            else:
+                # Contabilizar por tipo de fallo para diagnóstico
+                if not id_fecha:
+                    missing_fecha += 1
+                if not id_evento:
+                    missing_evento += 1
+                if not id_ubicacion:
+                    missing_ubicacion += 1
+                    # guardar ejemplos de claves no resueltas
+                    missing_ubicacion_keys[ubicacion_key] = missing_ubicacion_keys.get(ubicacion_key, 0) + 1
 
         except Exception as e:
             # Manejar errores por registro: se hace rollback para ese registro y seguimos
@@ -229,6 +299,20 @@ def load_data_to_dw(conn_dw, cleaned_records):
     
     conn_dw.commit()
     print(f"✅ Carga de datos completa. {registros_cargados} registros cargados en hechos_asistencia_humanitaria.")
+    # Diagnóstico de registros no insertados por fallos en FK
+    total_processed = len(df_cleaned)
+    total_failed = total_processed - registros_cargados
+    print(f"  Registros procesados: {total_processed}")
+    print(f"  Registros insertados: {registros_cargados}")
+    print(f"  Registros no insertados: {total_failed}")
+    print(f"    - Fallos por fecha (id_fecha faltante): {missing_fecha}")
+    print(f"    - Fallos por evento (id_evento faltante): {missing_evento}")
+    print(f"    - Fallos por ubicacion (id_ubicacion faltante): {missing_ubicacion}")
+    if missing_ubicacion_keys:
+        print("  Ejemplos de claves de ubicacion no resueltas (clave -> ocurrencias):")
+        # Mostrar hasta 20 ejemplos ordenados por ocurrencias
+        for k, v in sorted(missing_ubicacion_keys.items(), key=lambda x: -x[1])[:20]:
+            print(f"    {k} -> {v}")
 
 
 def main():
