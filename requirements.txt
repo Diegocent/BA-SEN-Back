@@ -4,3 +4,5 @@ pandas
 djangorestframework
 django-cors-headers
 django-filter
+openpyxl
+python-dotenv
