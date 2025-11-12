@@ -190,10 +190,6 @@ class DataCleaner:
         # Diccionario para corregir nombres de distritos
         self.estandarizacion_distritos = self._construir_diccionario_distritos()
 
-        # Cargar datos de barrios y localidades desde JSON
-        self.barrios_por_distrito = self._cargar_barrios_desde_json()
-        self.todas_localidades_validas = self._preparar_localidades_validas()
-
         # Preparamos versiones normalizadas de todos los diccionarios
         # Esto nos ayuda a comparar textos sin importar acentos o mayúsculas
         def _norm_str(s):
@@ -210,6 +206,12 @@ class DataCleaner:
                 return str(s).upper().strip()
 
         self._norm_str = _norm_str
+
+        # Cargar datos de barrios y localidades desde JSON
+        self.barrios_por_distrito = self._cargar_barrios_desde_json()
+        self.todas_localidades_validas = self._preparar_localidades_validas()
+
+        
 
         # Creamos versiones normalizadas de todos nuestros diccionarios
         self.estandarizacion_dept_norm = {}
@@ -531,7 +533,7 @@ class DataCleaner:
         norm1 = self._norm_str(texto1)
         norm2 = self._norm_str(texto2)
         
-        # Calculamos la similitud (0, 1)
+        # Calculamos la similitud (0 , 1)
         similitud = Levenshtein.ratio(norm1, norm2)
         
         self._similitud_cache[key] = similitud
