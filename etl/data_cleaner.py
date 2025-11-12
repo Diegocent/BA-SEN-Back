@@ -1009,6 +1009,50 @@ class DataCleaner:
         registros_iniciales = len(df)
         print(f"  Registros iniciales: {registros_iniciales}")
 
+        # Mostrar un estado inicial con ejemplos para facilitar diagnóstico
+        print("\n📊 ESTADO INICIAL:")
+        # Buscador de columnas por palabra clave (case-insensitive)
+        dept_col = next((c for c in df.columns if 'DEPART' in c.upper()), None)
+        evento_col = next((c for c in df.columns if 'EVENT' in c.upper()), None)
+        distr_col = next((c for c in df.columns if 'DISTRIT' in c.upper()), None)
+        loc_col = next((c for c in df.columns if 'LOCALID' in c.upper()), None)
+
+        try:
+            if dept_col is not None:
+                dept_counts = df[dept_col].fillna('SIN ESPECIFICAR').astype(str).value_counts(dropna=False)
+                print(f"  Departamentos iniciales: {len(dept_counts)}")
+                try:
+                    print(f"  Ejemplos: {dept_counts.head(5).to_dict()}")
+                except Exception:
+                    pass
+
+            if evento_col is not None:
+                evento_counts = df[evento_col].fillna('SIN ESPECIFICAR').astype(str).value_counts(dropna=False)
+                print(f"  Eventos iniciales: {len(evento_counts)}")
+                try:
+                    print(f"  Ejemplos: {evento_counts.head(5).to_dict()}")
+                except Exception:
+                    pass
+
+            if distr_col is not None:
+                distr_counts = df[distr_col].fillna('SIN ESPECIFICAR').astype(str).value_counts(dropna=False)
+                print(f"  Distritos iniciales: {len(distr_counts)}")
+                try:
+                    print(f"  Ejemplos: {distr_counts.head(5).to_dict()}")
+                except Exception:
+                    pass
+
+            if loc_col is not None:
+                loc_counts = df[loc_col].fillna('SIN ESPECIFICAR').astype(str).value_counts(dropna=False)
+                print(f"  Localidades iniciales: {len(loc_counts)}")
+                try:
+                    print(f"  Ejemplos: {loc_counts.head(5).to_dict()}")
+                except Exception:
+                    pass
+        except Exception:
+            # No interrumpimos el pipeline por errores al imprimir diagnósticos
+            pass
+
         # Normalizamos nombres de columnas para consistencia
         df.columns = [col.upper().replace(' ', '_') for col in df.columns]
 

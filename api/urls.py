@@ -20,6 +20,7 @@ from .views import (
     IncendiosAnualesPorDepartamentoAPIView,
     ResumenGeneralAPIView,
     ResumenPorDepartamentoAPIView,
+    CantidadDistritosAsistidosAPIView,
 )
 
 
@@ -46,4 +47,5 @@ urlpatterns = [
     path('incendios-anuales-por-departamento/', IncendiosAnualesPorDepartamentoAPIView.as_view(), name='incendios-anuales-por-departamento'),
     path('resumen-general/', ResumenGeneralAPIView.as_view(), name='resumen-general'),
     path('resumen-por-departamento/', ResumenPorDepartamentoAPIView.as_view(), name='resumen-por-departamento'),
+    path('cantidad-distritos-asistidos/', CantidadDistritosAsistidosAPIView.as_view(), name='cantidad-distritos-asistidos'),
 ]

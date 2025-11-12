@@ -3,6 +3,7 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
 from django.db.models import Sum, Count, Q, F
+from django.db.models.functions import Upper, Trim
 from .models import HechosAsistenciaHumanitaria
 from .serializers import HechosAsistenciaHumanitariaSerializer, TotalAyudasSerializer
 from datetime import datetime
@@ -140,10 +141,17 @@ class AsistenciaPorUbicacionAPIView(generics.ListAPIView):
     filterset_class = HechosAsistenciaHumanitariaFilterSet
 
     def get_queryset(self):
-        queryset = HechosAsistenciaHumanitaria.objects.exclude(id_evento__evento='ELIMINAR_REGISTRO').values('id_ubicacion__departamento', 'id_ubicacion__distrito').annotate(
-            departamento=F('id_ubicacion__departamento'),
-            distrito=F('id_ubicacion__distrito'),
-        ).order_by('id_ubicacion__departamento', 'id_ubicacion__distrito')
+        # Normalizar y agrupar por departamento/distrito usando trim+upper para evitar duplicados
+        qs = HechosAsistenciaHumanitaria.objects.exclude(id_evento__evento='ELIMINAR_REGISTRO')
+        qs = qs.annotate(
+            departamento_norm=Upper(Trim(F('id_ubicacion__departamento'))),
+            distrito_norm=Upper(Trim(F('id_ubicacion__distrito'))),
+        )
+
+        queryset = qs.values('departamento_norm', 'distrito_norm').annotate(
+            departamento=F('departamento_norm'),
+            distrito=F('distrito_norm'),
+        ).order_by('departamento', 'distrito').distinct()
 
         return _annotate_total_ayudas(queryset)
 class AsistenciaPorDepartamentoAPIView(generics.ListAPIView):
@@ -530,4 +538,29 @@ class ResumenPorDepartamentoAPIView(generics.ListAPIView):
         for item in queryset:
             item['evento_mas_frecuente'] = mapa_eventos.get(item.get('departamento'), 'N/A')
         return queryset
+
+
+class CantidadDistritosAsistidosAPIView(APIView):
+    """
+    Devuelve la cantidad de distritos distintos que recibieron asistencias.
+    Excluye distritos con valor 'SIN ESPECIFICAR' y permite filtros por rango de fechas.
+    """
+    def get(self, request, *args, **kwargs):
+        queryset = HechosAsistenciaHumanitaria.objects.exclude(id_evento__evento='ELIMINAR_REGISTRO')
+
+        # Aplicar filtros opcionales de fecha si se proporcionan
+        fecha_desde = request.query_params.get('fecha_desde')
+        fecha_hasta = request.query_params.get('fecha_hasta')
+        if fecha_desde:
+            queryset = queryset.filter(id_fecha__fecha__gte=fecha_desde)
+        if fecha_hasta:
+            queryset = queryset.filter(id_fecha__fecha__lte=fecha_hasta)
+
+        # Normalizar distrito (trim+upper) y contar distintos excluyendo 'SIN ESPECIFICAR'
+        qs = queryset.annotate(distrito_norm=Upper(Trim(F('id_ubicacion__distrito'))))
+        qs = qs.exclude(distrito_norm__isnull=True).exclude(distrito_norm__exact='').exclude(distrito_norm='SIN ESPECIFICAR')
+
+        distinct_count = qs.values('distrito_norm').distinct().count()
+
+        return Response({'distritos_asistidos': distinct_count})
     
