@@ -1,8 +1,15 @@
 # -*- coding: utf-8 -*-
-"""Pipeline de limpieza y estandarización para el ETL.
+"""Pipeline de limpieza y estandarización para el ETL - Fase de Transformación.
 
-Contiene reglas y utilidades para normalizar departamentos, eventos y
-cantidades antes de cargar los datos al Data Warehouse.
+Este módulo se encarga de preparar los datos crudos para que estén listos 
+para ser cargados en el Data Warehouse. Piensa en esto como la "cocina" donde 
+los datos crudos se convierten en información lista para analizar.
+
+Trabajamos principalmente en tres áreas:
+1. Ubicaciones: Para que todos los departamentos, distritos y localidades 
+   sigan un formato estándar
+2. Eventos: Para categorizar consistentemente los tipos de emergencias y ayudas
+3. Cantidades: Para asegurar que todos los números estén en formato correcto
 """
 
 import pandas as pd
@@ -11,21 +18,33 @@ from datetime import datetime
 import warnings
 import re
 import unicodedata
+import json
+from pathlib import Path
+from difflib import SequenceMatcher
+import Levenshtein
 warnings.filterwarnings('ignore')
 
 
 class DataCleaner:
     def __init__(self):
-        # Nombres históricos de campos (compatibilidad con datasets antiguos)
+        """Prepara todas las herramientas y reglas para limpiar los datos.
+        
+        Aquí definimos todos los diccionarios y reglas que usaremos para 
+        estandarizar la información. Es como tener un manual de instrucciones 
+        para transformar datos inconsistentes en información confiable.
+        """
+        
+        # Campos históricos que pueden aparecer en versiones antiguas de los datos
         self.original_kit_fields = ['kit_a', 'kit_b']
 
-        # Campos estándar que pueden aparecer o ser generados por el pipeline
+        # Tipos de ayuda humanitaria que el sistema debe reconocer
         self.aid_fields = [
             'kit_eventos', 'kit_sentencia', 'chapa_fibrocemento', 'chapa_zinc',
             'colchones', 'frazadas', 'terciadas', 'puntales', 'carpas_plasticas'
         ]
 
-    # Orden numérico de departamentos (clave para reportes/ordenamiento)
+        # Orden oficial de los departamentos para reportes y dashboards
+        # Esto asegura que en los reportes los departamentos aparezcan siempre en el mismo orden
         self.departamento_orden = {
             'CONCEPCIÓN': 1, 'SAN PEDRO': 2, 'CORDILLERA': 3, 'GUAIRÁ': 4,
             'CAAGUAZÚ': 5, 'CAAZAPÁ': 6, 'ITAPÚA': 7, 'MISIONES': 8,
@@ -34,20 +53,24 @@ class DataCleaner:
             'ALTO PARAGUAY': 17, 'CAPITAL': 18
         }
 
-    # Diccionario de normalización de nombres de departamentos.
-    # Mapea variantes y errores comunes a un nombre estándar.
+        # Diccionario para corregir nombres de departamentos
+        # Aquí mapeamos todas las formas en que la gente escribe los departamentos
+        # hacia la forma oficial que usaremos en el sistema
         self.estandarizacion_dept = {
-            # Limpieza de variantes
+            # Correcciones para Ñeembucú
             'ÑEEMBUCU': 'ÑEEMBUCÚ', 'ÑEEMBUCÙ': 'ÑEEMBUCÚ', 'ÑEMBUCU': 'ÑEEMBUCÚ',
             'Ñeembucu': 'ÑEEMBUCÚ', 'ÑEEMBUCÚ': 'ÑEEMBUCÚ',
 
+            # Correcciones para Alto Paraná
             'ALTO PARANA': 'ALTO PARANÁ', 'ALTO PARANÀ': 'ALTO PARANÁ',
             'ALTO PNÀ': 'ALTO PARANÁ', 'ALTO PNÁ': 'ALTO PARANÁ', 'ALTO PY': 'ALTO PARANÁ',
             'Alto Parana': 'ALTO PARANÁ', 'ALTO PARANÁ': 'ALTO PARANÁ',
 
+            # Correcciones para Boquerón
             'BOQUERÒN': 'BOQUERON', 'BOQUERÓN': 'BOQUERON', 'Boqueron': 'BOQUERON',
             'BOQUERON': 'BOQUERON',
 
+            # Correcciones para Caaguazú (uno de los que más variaciones tiene)
             'CAAGUAZU': 'CAAGUAZÚ', 'CAAGUAZÙ': 'CAAGUAZÚ', 'Caaguazu': 'CAAGUAZÚ',
             'Caaguazú': 'CAAGUAZÚ', 'CAAGUAZÚ': 'CAAGUAZÚ',
             'CAAG-CANIND': 'CAAGUAZÚ', 'CAAG/CANIN': 'CAAGUAZÚ', 'CAAG/CANIND.': 'CAAGUAZÚ',
@@ -57,170 +80,124 @@ class DataCleaner:
             'CAAGUAZU, SAN PEDRO Y CANINDEYU': 'CAAGUAZÚ',
             'CAAGUAZU-GUAIRA Y SAN PEDRO': 'CAAGUAZÚ', 'CAAGUAZU-GUAIRA': 'CAAGUAZÚ',
 
+            # Correcciones para Caazapá
             'CAAZAPA': 'CAAZAPÁ', 'CAAZAPÀ': 'CAAZAPÁ', 'Caazapa': 'CAAZAPÁ',
             'CAAZAPÁ': 'CAAZAPÁ', 'CAAZAPA - GUAIRA': 'CAAZAPÁ',
             'Caazapa - Guaira': 'CAAZAPÁ',
 
+            # Correcciones para Canindeyú
             'CANINDEYU': 'CANINDEYÚ', 'CANINDEYÙ': 'CANINDEYÚ', 'Canindeyu': 'CANINDEYÚ',
             'CANINDEYÚ': 'CANINDEYÚ', 'CANINDEYU - CAAGUAZU': 'CANINDEYÚ',
             'CANINDEYU Y SAN PEDRO': 'CANINDEYÚ',
 
+            # Correcciones para Central
             'CENT/CORDILL': 'CENTRAL', 'CENTR-CORD': 'CENTRAL', 'CENTRAL': 'CENTRAL',
             'CENTRAL-CORDILLERA': 'CENTRAL', 'CENTRAL/CAP': 'CENTRAL', 'CENTRAL/CAPITAL': 'CENTRAL',
             'CENTRAL/COR': 'CENTRAL', 'CENTRAL/CORD': 'CENTRAL', 'CENTRAL/CORD.': 'CENTRAL',
             'CENTRAL/CORDILLER': 'CENTRAL', 'CENTRAL/CORDILLERA': 'CENTRAL',
             'CENTRAL/PARAG.': 'CENTRAL', 'central': 'CENTRAL',
 
+            # Correcciones para Concepción
             'CONCEPCION': 'CONCEPCIÓN', 'CONCEPCIÒN': 'CONCEPCIÓN', 'Concepcion': 'CONCEPCIÓN',
             'CONCEPCIÓN': 'CONCEPCIÓN',
 
+            # Correcciones para Cordillera
             'COORDILLERA': 'CORDILLERA', 'CORD./CENTRAL': 'CORDILLERA',
             'CORD/S.PEDRO': 'CORDILLERA', 'CORDILLERA': 'CORDILLERA',
             'CORDILLERA ARROYOS Y EST.': 'CORDILLERA', 'CORDILLERA Y SAN PEDRO': 'CORDILLERA',
             'CORDILLERACAACUPÈ': 'CORDILLERA', 'Cordillera': 'CORDILLERA',
             'CORDILLERA ARROYOS': 'CORDILLERA',
 
+            # Correcciones para Guairá
             'GUAIRA': 'GUAIRÁ', 'GUAIRÀ': 'GUAIRÁ', 'GUIARA': 'GUAIRÁ',
             'Guaira': 'GUAIRÁ', 'GUAIRÁ': 'GUAIRÁ',
             'GUAIRA - CAAZAPA': 'GUAIRÁ', 'Guaira - Caazapa': 'GUAIRÁ',
 
+            # Correcciones para Itapúa
             'ITAPUA': 'ITAPÚA', 'ITAPUA- CAAGUAZU': 'ITAPÚA', 'ITAPÙA': 'ITAPÚA',
             'Itapua': 'ITAPÚA', 'ITAPÚA': 'ITAPÚA',
 
+            # Correcciones para Misiones
             'MISIONES YABEBYRY': 'MISIONES', 'Misiones': 'MISIONES', 'MISIONES': 'MISIONES',
 
+            # Correcciones para Paraguarí
             'PARAGUARI': 'PARAGUARÍ', 'PARAGUARI PARAGUARI': 'PARAGUARÍ',
             'PARAGUARÌ': 'PARAGUARÍ', 'Paraguari': 'PARAGUARÍ', 'PARAGUARÍ': 'PARAGUARÍ',
             'PARAGUARI - GUAIRA': 'PARAGUARÍ', 'Paraguari - Guaira': 'PARAGUARÍ',
             'PARAGUARI - GUAIRA': 'PARAGUARÍ',
 
+            # Correcciones para Pte. Hayes
             'PDTE HAYES': 'PDTE. HAYES', 'PDTE HAYES S.PIRI-4 DE MAYO': 'PDTE. HAYES',
             'PDTE HYES': 'PDTE. HAYES', 'PDTE. HAYES': 'PDTE. HAYES', 'PTE HAYES': 'PDTE. HAYES',
             'PTE. HAYES': 'PDTE. HAYES', 'Pdte Hayes': 'PDTE. HAYES', 'Pdte. Hayes': 'PDTE. HAYES',
             'PDTE.HAYES': 'PDTE. HAYES',
 
+            # Correcciones para San Pedro
             'S.PEDRO/CAN.': 'SAN PEDRO', 'SAN PEDRO': 'SAN PEDRO',
             'SAN PEDRO-CAAGUAZU': 'SAN PEDRO', 'SAN PEDRO/ AMAMBAY': 'SAN PEDRO',
             'SAN PEDRO/ CANINDEYU': 'SAN PEDRO', 'San Pedro': 'SAN PEDRO',
             'SAN PEDRO - CANINDEYU': 'SAN PEDRO', 'San Pedro - Canindeyu': 'SAN PEDRO',
 
-            # CASOS ESPECIALES - TODOS A CENTRAL
+            # Casos especiales - cuando no está claro el departamento, usamos Central por defecto
             'VARIOS DEP.': 'CENTRAL', 'VARIOS DPTOS.': 'CENTRAL', 'VARIOS DPTS.': 'CENTRAL',
             'varios': 'CENTRAL', 'REGION ORIENTAL/ OCCIDENTAL': 'CENTRAL',
             'VARIOS': 'CENTRAL', 'ASOC MUSICO': 'CENTRAL', 'INDI': 'CENTRAL',
             'SIN_DEPARTAMENTO': 'CENTRAL', 'SIN ESPECIFICAR': 'CENTRAL',
 
-            # DISTRITOS MAPEADOS A SUS DEPARTAMENTOS
+            # Cuando la gente escribe el nombre del distrito en lugar del departamento
             'CNEL OVIEDO': 'CAAGUAZÚ', 'ITA': 'CENTRAL', 'ITAUGUA': 'CENTRAL',
             'VILLARICA': 'GUAIRÁ', 'ASUNCION': 'CAPITAL', 'ASUNCIÓN': 'CAPITAL',
             'CAACUPÈ': 'CORDILLERA', 'CAACUPÉ': 'CORDILLERA',
 
-            # DEPARTAMENTOS BASE
+            # Departamentos que ya vienen correctos
             'ALTO PARAGUAY': 'ALTO PARAGUAY', 'AMAMBAY': 'AMAMBAY', 'CAPITAL': 'CAPITAL'
         }
 
-        # Mapeo de distritos que a veces fueron escritos en la columna DEPARTAMENTO
-        # (registradores pusieron el distrito en vez del departamento).
-        # Se usan claves en mayúsculas para comparar contra el texto limpiado.
-        self.distrito_a_departamento = {
-            'ASUNCIÓN': 'CAPITAL', 'ASUNCION': 'CAPITAL',
-            'LIMPIO': 'CENTRAL', 'MARIANO ROQUE ALONSO': 'CENTRAL', 'ÑEMBY': 'CENTRAL',
-            'SAN LORENZO': 'CENTRAL', 'LAMBARÉ': 'CENTRAL', 'FERNANDO DE LA MORA': 'CENTRAL',
-            'VILLA ELISA': 'CENTRAL', 'LUQUE': 'CENTRAL', 'CAPIATÁ': 'CENTRAL', 'CAPIATA': 'CENTRAL',
-            'ITA': 'CENTRAL', 'ITAUGUA': 'CENTRAL', 'VILLARRICA': 'GUAIRÁ', 'CORONEL OVIEDO': 'CAAGUAZÚ',
-            'CAACUPÉ': 'CORDILLERA', 'CAACUPE': 'CORDILLERA'
-        }
+        # Lista oficial de todos los distritos válidos organizados por departamento
+        # Esto nos sirve para validar que los distritos existen y pertenecen al departamento correcto
+        self.DISTRITOS_POR_DEPARTAMENTO = {
+            'CAPITAL': {'ASUNCIÓN'},
+            'CONCEPCIÓN': {'CONCEPCIÓN', 'BELÉN', 'HORQUETA', 'LORETO', 'SAN CARLOS', 'SAN LÁZARO', 'YVY YA\'Ú', 'AZOTEY', 'SGTO. JOSÉ FÉLIX LÓPEZ', 'SAN ALFREDO', 'PASO BARRETO', 'ITACUÁ', 'PASO HORQUETA', 'ARROYITO'},
+            'SAN PEDRO': {'SAN PEDRO DEL YKUAMANDIYÚ', 'ANTEQUERA', 'CHORE', 'GRAL. ELIZARDO AQUINO', 'ITACURUBÍ DEL ROSARIO', 'LIMA', 'NUEVA GERMANIA', 'SAN ESTANISLAO', 'SAN PABLO', 'TACUATÍ', 'UNIÓN', '25 DE DICIEMBRE', 'VILLA DEL ROSARIO', 'GRAL. RESQUÍN', 'YATAITY DEL NORTE', 'GUAJAYVÍ', 'CAPIIBARY', 'SANTA ROSA DEL AGUARAY', 'YRYBUCUÁ', 'LIBERACIÓN', 'SAN JOSÉ DEL ROSARIO', 'SAN VICENTE PANCHOLO'},
+            'CORDILLERA': {'CAACUPÉ', 'ALTOS', 'ARROYOS Y ESTEROS', 'ATYRÁ', 'CARAGUATAY', 'EMBOSCADA', 'EUSEBIO AYALA', 'ISLA PUCÚ', 'ITACURUBÍ DE LA CORDILLERA', 'JUAN DE MENA', 'LOMA GRANDE', 'MBOCAYATY DEL YHAGUY', 'NUEVA COLOMBIA', 'PIRIBEBUY', 'PRIMERO DE MARZO', 'SAN BERNARDINO', 'SANTA ELENA', 'SAN JOSÉ OBRERO', 'TOBATÍ', 'VALENZUELA'},
+            'GUAIRÁ': {'VILLARRICA', 'BORJA', 'CAPITÁN MAURICIO JOSÉ TROCHE', 'COLONIA INDEPENDENCIA', 'DR. BOTRELL', 'FÉLIX PÉREZ CARDOZO', 'GARAMBARÉ', 'ITAPÉ', 'ITURBE', 'JOSÉ FASSARDI', 'MBOCAYATY', 'NATALICIO TALAVERA', 'ÑUMÍ', 'PASO YOBÁI', 'SAN SALVADOR', 'TEBAICUARY', 'YATAITY DEL GUAIRÁ'},
+            'CAAGUAZÚ': {'CAAGUAZÚ', 'CORONEL OVIEDO', 'DR. J. EULOGIO ESTIGARRIBIA', 'DR. JUAN MANUEL FRUTOS', 'SAN JOAQUÍN', 'SAN JOSÉ DE LOS ARROYOS', 'LA PASTORA', 'NUEVA TOLEDO', 'VAQUERÍA', 'YHÚ', '3 DE FEBRERO', 'CARAYAÓ', 'MCAL. FCO. SOLANO LÓPEZ', 'NUEVA LONDRES', 'RAÚL ARSENIO OVIEDO', 'REPATRIACIÓN', 'R.I. 3 CORRALES', 'SIMÓN BOLIVAR'},
+            'CAAZAPÁ': {'CAAZAPÁ', '3 DE MAYO', 'ABAÍ', 'BUENA VISTA', 'CORONEL MACIEL', 'DR. MOISÉS S. BERTONI', 'FULGENCIO YEGROS', 'GRAL. HIGINIO MORÍNIGO', 'SAN JUAN NEPOMUCENO', 'TAVAÍ', 'YUTY'},
+            'ITAPÚA': {'ENCARNACIÓN', 'CAMBYRETÁ', 'CAPITÁN MIRANDA', 'CORONEL BOGADO', 'FRAM', 'GENERAL ARTIGAS', 'HOHENAU', 'JESÚS DE TAVARANGUÉ', 'LA PAZ', 'OBLIGADO', 'PIRAPÓ', 'SAN COSME Y DAMIÁN', 'SAN JUAN DEL PARANÁ', 'SAN PEDRO DEL PARANÁ', 'TRINIDAD', 'NATALIO', 'CARMEN DEL PARANÁ', 'YATYTAY', 'MAYOR JOSÉ D. OTAÑO', 'SAN RAFAEL DEL PARANÁ', 'BELLA VISTA', 'CAPITÁN MEZA', 'EDELIRA', 'ITAPÚA POTY', 'ALTO VERÁ', 'TOMÁS ROMERO PEREIRA'},
+            'MISIONES': {'SAN JUAN BAUTISTA', 'AYOLAS', 'SAN IGNACIO GUAZÚ', 'SANTA MARÍA DE FE', 'SANTIAGO', 'VILLA FLORIDA', 'YABEBIRY', 'SAN MIGUEL', 'SAN PATRICIO', 'SANTA ROSA'},
+            'PARAGUARÍ': {'PARAGUARÍ', 'CARAPEGUÁ', 'ACAHAY', 'CAAPUCÚ', 'CABALLERO', 'ESCOBER', 'LA COLMENA', 'MBUYAPEY', 'PIRAYÚ', 'QUIINDY', 'QUYQUYHÓ', 'SAN ROQUE GONZÁLEZ DE SANTA CRUZ', 'SAPUCAI', 'TEBICUARYMÍ', 'YAGUARÓN', 'YBYCUÍ', 'YBYTYMÍ', 'MARÍA ANTONIA'},
+            'ALTO PARANÁ': {'CIUDAD DEL ESTE', 'DOCTOR JUAN LEÓN MALLORQUÍN', 'DOCTOR RAÚL PEÑA',       'DOMINGO MARTÍNEZ DE IRALA', 'HERNANDARIAS', 'IRUÑA', 'ITAKYRY', 'JUAN EMILIO O\'LEARY', 'LOS CEDRALES', 'MBARACAYÚ', 'MINGA GUAZÚ', 'MINGA PORÁ', 'NARANJAL', 'ÑACUNDAY', 'PRESIDENTE FRANCO', 'SAN ALBERTO', 'SAN CRISTÓBAL', 'SANTA FE DEL PARANÁ', 'SANTA RITA', 'SANTA ROSA DEL MONDAY', 'TAVAPY', 'YGUAZÚ'},
+            'CENTRAL': {'AREGUÁ', 'CAPIATÁ', 'FERNANDO DE LA MORA', 'GUARAMBARÉ', 'ITÁ', 'ITAUGUÁ', 'J. AUGUSTO SALDÍVAR', 'LAMBARÉ', 'LIMPIO', 'LUQUE', 'MARIANO ROQUE ALONSO', 'ÑEMBY', 'NUEVA ITALIA', 'SAN ANTONIO', 'SAN LORENZO', 'VILLA ELISA', 'VILLETTA', 'YPACARAÍ', 'YPANÉ'},
+            'ÑEEMBUCÚ': {'PILAR', 'CERRITO', 'DESMOCHADOS', 'GENERAL JOSÉ EDUVIGIS DÍAS', 'GUAZÚ CUÁ', 'HUMAITÁ', 'ISLA UMBÚ', 'LAURELES', 'PASO DE PATRIA', 'SAN JUAN BAUTISTA DE ÑEEMBUCÚ', 'TACUARAS', 'VILLA FRANCA', 'VILLA OLIVA', 'VILLALBÍN'},
+            'AMAMBAY': {'PEDRO JUAN CABALLERO', 'BELLA VISTA NORTE', 'CAPITÁN BADO', 'KARAPAÍ', 'ZANJA PYTÁ', 'CERRO CORÁ'},
+            'CANINDEYÚ': {'SALTO DEL GUAIRÁ', 'CORPUS CHRISTI', 'CURUGUATY', 'GENERAL FRANCISCO CABALLERO ÁLVAREZ', 'ITANARÁ', 'KATUETÉ', 'LA PALOMA', 'NUEVA ESPERANZA', 'VILLA YGATIMÍ', 'YASY CAÑY', 'YPEJHÚ', 'LAUREL', 'PUERTO ADELA', 'MARACANÁ', 'YBY PYTA', 'YBYRAROBANÁ'},
+            'PDTE. HAYES': {'VILLA HAYES', 'BENJAMÍN ACEVAL', 'DOCTOR JOSÉ FALCÓN', 'GENERAL BRUGUEZ', 'NANAWA', 'PUERTO PINASCO', 'TENIENTE IRALA FERNÁNDEZ', 'NUEVA ASUNCIÓN', 'CAMPO ACEVAL', 'TENIENTE ESTEBAN MARTÍNEZ'},
+            'ALTO PARAGUAY': {'FUERTE OLIMPO', 'BAHÍA NEGRA', 'CAPITÁN CARMELO PERALTA', 'PUERTO CASADO'},
+            'BOQUERON': {'FILADELFIA', 'LOMA PLATA', 'MARISCAL ESTIGARRIBIA', 'BOQUERÓN'}
+            }
 
-        # Mapeo puntual de localidades a su distrito y departamento.
-        # Este mapa se usa para inferir DISTRITO/DEPARTAMENTO cuando la fila
-        # sólo tiene LOCALIDAD o cuando los valores están en la columna equivocada.
-        self.localidad_map = {
-            'ASUNCION': {'distrito': 'ASUNCIÓN', 'departamento': 'CAPITAL'},
-            'BAÑADO SUR': {'distrito': 'ASUNCIÓN', 'departamento': 'CAPITAL'},
-            'BARRIO ROBERTO L. PETTIT': {'distrito': 'ASUNCIÓN', 'departamento': 'CAPITAL'},
-            'BARRIO SAN FRANCISCO': {'distrito': 'ASUNCIÓN', 'departamento': 'CAPITAL'},
-            'CATEURA': {'distrito': 'ASUNCIÓN', 'departamento': 'CAPITAL'},
-            'CHACARITA - PARQUE CABALLERO': {'distrito': 'ASUNCIÓN', 'departamento': 'CAPITAL'},
-            'PUERTO BOTANICO': {'distrito': 'ASUNCIÓN', 'departamento': 'CAPITAL'},
-            'RICARDO BRUGADA - CHACARITA': {'distrito': 'ASUNCIÓN', 'departamento': 'CAPITAL'},
-            'SAJONIA': {'distrito': 'ASUNCIÓN', 'departamento': 'CAPITAL'},
-            'SANTA ANA': {'distrito': 'ASUNCIÓN', 'departamento': 'CAPITAL'},
-            'TABLADA NUEVA': {'distrito': 'ASUNCIÓN', 'departamento': 'CAPITAL'},
-            'VIRGEN DE FATIMA': {'distrito': 'ASUNCIÓN', 'departamento': 'CAPITAL'},
-            'ZEBALLOS CUE': {'distrito': 'ASUNCIÓN', 'departamento': 'CAPITAL'},
-            'CAACUPEMI - ZEBALLOS CUE': {'distrito': 'ASUNCIÓN', 'departamento': 'CAPITAL'},
-            'NANAWA': {'distrito': 'NANAWA', 'departamento': 'PDTE. HAYES'},
-            'GRAL. BRUGUEZ': {'distrito': 'GENERAL BRUGUEZ', 'departamento': 'PDTE. HAYES'},
-            'POZO COLORADO': {'distrito': 'TTE. IRALA FERNÁNDEZ', 'departamento': 'PDTE. HAYES'},
-            'SAN FERNANDO': {'distrito': 'TTE. IRALA FERNÁNDEZ', 'departamento': 'PDTE. HAYES'},
-            'MAYOR MARTINEZ': {'distrito': 'MAYOR JOSÉ J. MARTÍNEZ', 'departamento': 'ÑEEMBUCÚ'},
-            'PILAR': {'distrito': 'PILAR', 'departamento': 'ÑEEMBUCÚ'},
-            'VILLA FRANCA': {'distrito': 'VILLA FRANCA', 'departamento': 'ÑEEMBUCÚ'},
-            'VILLA OLIVA': {'distrito': 'VILLA OLIVA', 'departamento': 'ÑEEMBUCÚ'},
-            'CERRITO': {'distrito': 'CERRITO', 'departamento': 'ÑEEMBUCÚ'},
-            'CIUDAD DEL ESTE': {'distrito': 'CIUDAD DEL ESTE', 'departamento': 'ALTO PARANÁ'},
-            'ENCARNACION': {'distrito': 'ENCARNACIÓN', 'departamento': 'ITAPÚA'},
-            'MARIA AUXILIADORA': {'distrito': 'TOMÁS ROMERO PEREIRA', 'departamento': 'ITAPÚA'},
-            'ITAPUA POTY': {'distrito': 'ITAPÚA POTY', 'departamento': 'ITAPÚA'},
-            'ANACONDA': {'distrito': 'ENCARNACIÓN', 'departamento': 'ITAPÚA'},
-            'LA PAZ': {'distrito': 'LA PAZ', 'departamento': 'ITAPÚA'},
-            'AYOLAS': {'distrito': 'AYOLAS', 'departamento': 'MISIONES'},
-            'SAN JUAN': {'distrito': 'SAN JUAN BAUTISTA', 'departamento': 'MISIONES'},
-            'ACAHAY': {'distrito': 'ACAHAY', 'departamento': 'PARAGUARÍ'},
-            'PARAGUARI': {'distrito': 'PARAGUARÍ', 'departamento': 'PARAGUARÍ'},
-            'TEBICUARYMI': {'distrito': 'TEBUICUARYMI', 'departamento': 'PARAGUARÍ'},
-            'YBYTYMI': {'distrito': 'YBYTYMÍ', 'departamento': 'PARAGUARÍ'},
-            'AREGUA': {'distrito': 'AREGUÁ', 'departamento': 'CENTRAL'},
-            'CAPIATA': {'distrito': 'CAPIATÁ', 'departamento': 'CENTRAL'},
-            'FERNANDO DE LA MORA': {'distrito': 'FERNANDO DE LA MORA', 'departamento': 'CENTRAL'},
-            'GUARAMBARE': {'distrito': 'GUARAMBARÉ', 'departamento': 'CENTRAL'},
-            'ITA': {'distrito': 'ITÁ', 'departamento': 'CENTRAL'},
-            'LAMBARE': {'distrito': 'LAMBARÉ', 'departamento': 'CENTRAL'},
-            'LIMPIO': {'distrito': 'LIMPIO', 'departamento': 'CENTRAL'},
-            'LUQUE': {'distrito': 'LUQUE', 'departamento': 'CENTRAL'},
-            'MARIANO R. ALONSO': {'distrito': 'MARIANO ROQUE ALONSO', 'departamento': 'CENTRAL'},
-            'ÑEMBY': {'distrito': 'ÑEMBY', 'departamento': 'CENTRAL'},
-            'SAN LORENZO': {'distrito': 'SAN LORENZO', 'departamento': 'CENTRAL'},
-            'VILLET A': {'distrito': 'VILLET A', 'departamento': 'CENTRAL'},
-            'VILLA ELISA': {'distrito': 'VILLA ELISA', 'departamento': 'CENTRAL'},
-            'REDUCTO': {'distrito': 'SAN LORENZO', 'departamento': 'CENTRAL'},
-            'TOBATI': {'distrito': 'TOBATÍ', 'departamento': 'CORDILLERA'},
-            'CARAYAO': {'distrito': 'CARAYAÓ', 'departamento': 'CAAGUAZÚ'},
-            'RI 3 CORRALES': {'distrito': 'R.I. TRES CORRALES', 'departamento': 'CAAGUAZÚ'},
-            'YHU': {'distrito': 'YHÚ', 'departamento': 'CAAGUAZÚ'},
-            'BELLA VISTA NORTE': {'distrito': 'BELLA VISTA', 'departamento': 'AMAMBAY'},
-            'RESQUIN': {'distrito': 'GENERAL ISIDORO RESQUÍN', 'departamento': 'SAN PEDRO'},
-            'SANTA ROSA DEL AGUARAY': {'distrito': 'SANTA ROSA DEL AGUARAY', 'departamento': 'SAN PEDRO'},
-            'ANTEQUERA': {'distrito': 'ANTEQUERA', 'departamento': 'SAN PEDRO'},
-            'LIMA': {'distrito': 'LIMA', 'departamento': 'SAN PEDRO'},
-            'SAN ESTANISLAO': {'distrito': 'SAN ESTANISLAO', 'departamento': 'SAN PEDRO'},
-            'SAN PEDRO DEL YCUAMANDYJU': {'distrito': 'SAN PEDRO DEL YCUAMANDIYÚ', 'departamento': 'SAN PEDRO'},
-            'UNION': {'distrito': 'UNIÓN', 'departamento': 'SAN PEDRO'},
-            '25 DE DICIEMBRE': {'distrito': '25 DE DICIEMBRE', 'departamento': 'SAN PEDRO'},
-            'PASO BARRETO': {'distrito': 'PASO BARRETO', 'departamento': 'CONCEPCIÓN'},
-            'VALLEMI': {'distrito': 'SAN LÁZARO', 'departamento': 'CONCEPCIÓN'},
-            'FUERTE OLIMPO': {'distrito': 'FUERTE OLIMPO', 'departamento': 'ALTO PARAGUAY'},
-            'BAHIA NEGRA': {'distrito': 'BAHÍA NEGRA', 'departamento': 'ALTO PARAGUAY'},
-            'CARMELO PERALTA': {'distrito': 'CAPITÁN CARMELO PERALTA', 'departamento': 'ALTO PARAGUAY'},
-            'PUERTO CASADO': {'distrito': 'PUERTO CASADO', 'departamento': 'ALTO PARAGUAY'},
-            'PUERTO PINASCO': {'distrito': 'PUERTO PINASCO', 'departamento': 'ALTO PARAGUAY'},
-            'LOMA PLATA': {'distrito': 'LOMA PLATA', 'departamento': 'BOQUERON'},
-            'BOQUERON': {'distrito': 'BOQUERÓN', 'departamento': 'BOQUERON'},
-            'MCAL. ESTIGARRIBIA': {'distrito': 'MARISCAL JOSÉ FÉLIX ESTIGARRIBIA', 'departamento': 'BOQUERON'},
-            'PEDRO P. PEÑA': {'distrito': 'PEDRO P. PEÑA', 'departamento': 'BOQUERON'},
-            'COLONIAS ARMONIA': {'distrito': 'LOMA PLATA', 'departamento': 'BOQUERON'},
-            'ASENTAMIENTOS NICHATOCHIT': {'distrito': 'MARISCAL ESTIGARRIBIA', 'departamento': 'BOQUERON'},
-            'YRYBUCUA': {'distrito': 'YRYBUCUÁ', 'departamento': 'CANINDEYÚ'},
-            'CRUCE LIBERACION': {'distrito': 'CRUCE LIBERACIÓN', 'departamento': 'CANINDEYÚ'},
-            'YATAITY DEL NORTE': {'distrito': 'YATAITY DEL NORTE', 'departamento': 'GUAIRÁ'},
-            'LA ROSA KUE': {'distrito': 'MINGA GUAZÚ', 'departamento': 'ALTO PARANÁ'},
-            'LA ESPERANZA': {'distrito': 'MAYOR OTAÑO / NARANJAL', 'departamento': 'ITAPÚA / ALTO PARANÁ'},
-            'NUEVA PROMESA': {'distrito': 'FILADELFIA / LOMA PLATA', 'departamento': 'BOQUERON'},
-        }
+        # Creamos un conjunto con todos los distritos válidos para búsquedas rápidas
+        self.todos_distritos_validos = set()
+        for distritos in self.DISTRITOS_POR_DEPARTAMENTO.values():
+            self.todos_distritos_validos.update(distritos)
 
-        # --- Preparar versiones normalizadas (sin acentos, en mayúsculas) de los mapas
-        # Esto permite reconocer entradas con/ sin acentos o con errores de tildes.
+        # Mapeo de distrito a departamento para cuando solo tenemos el distrito
+        self.distrito_a_departamento = {}
+        for depto, distritos in self.DISTRITOS_POR_DEPARTAMENTO.items():
+            for distrito in distritos:
+                self.distrito_a_departamento[distrito] = depto
+
+        # Diccionario para corregir nombres de distritos
+        self.estandarizacion_distritos = self._construir_diccionario_distritos()
+
+        # Cargar datos de barrios y localidades desde JSON
+        self.barrios_por_distrito = self._cargar_barrios_desde_json()
+        self.todas_localidades_validas = self._preparar_localidades_validas()
+
+        # Preparamos versiones normalizadas de todos los diccionarios
+        # Esto nos ayuda a comparar textos sin importar acentos o mayúsculas
         def _norm_str(s):
+            """Limpia un texto para comparación: quita acentos, convierte a mayúsculas y elimina espacios extra."""
             if s is None:
                 return ''
             try:
@@ -234,173 +211,37 @@ class DataCleaner:
 
         self._norm_str = _norm_str
 
-        # Normalizar estandarizacion_dept
+        # Creamos versiones normalizadas de todos nuestros diccionarios
         self.estandarizacion_dept_norm = {}
         for k, v in self.estandarizacion_dept.items():
             self.estandarizacion_dept_norm[_norm_str(k)] = v
 
-        # Normalizar distrito->departamento
         self.distrito_a_departamento_norm = {}
         for k, v in self.distrito_a_departamento.items():
             self.distrito_a_departamento_norm[_norm_str(k)] = v
 
-        # Normalizar localidad_map
-        self.localidad_map_norm = {}
-        for k, v in self.localidad_map.items():
-            self.localidad_map_norm[_norm_str(k)] = {'distrito': v.get('distrito'), 'departamento': v.get('departamento')}
+        self.estandarizacion_distritos_norm = {}
+        for k, v in self.estandarizacion_distritos.items():
+            self.estandarizacion_distritos_norm[_norm_str(k)] = v
 
-        # Construir un mapa canónico de localidades (normalized -> canonical original)
-        self.localidad_canonical_map = {}
-        for k in self.localidad_map.keys():
-            self.localidad_canonical_map[_norm_str(k)] = k
+        self.todos_distritos_validos_norm = {self._norm_str(d) for d in self.todos_distritos_validos}
 
-        # Construir un mapa canónico de distritos (normalized -> canonical with accents)
-        self.distrito_canonical_map = {}
-        # Prefer valores 'distrito' que aparecen en localidad_map como fuente canónica
-        for v in self.localidad_map.values():
-            d = v.get('distrito')
-            if d:
-                self.distrito_canonical_map[_norm_str(d)] = d
-        # Asegurar algunos casos explícitos si faltaran
-        self.distrito_canonical_map.setdefault(_norm_str('ASUNCIÓN'), 'ASUNCIÓN')
-        self.distrito_canonical_map.setdefault(_norm_str('ASUNCION'), 'ASUNCIÓN')
-
-        # Diccionario de estandarización explícita de distritos (variantes -> canonical)
-        self.estandarizacion_distrito = {
-            'Asuncion': 'ASUNCIÓN',
-            'Asunciòn': 'ASUNCIÓN',
-            'Asunción': 'ASUNCIÓN',
-            'Zeballos Cue': 'ZEBALLOS CUE',
-            'Encarnacion': 'ENCARNACIÓN',
-            'Encarnaciòn': 'ENCARNACIÓN',
-            'Mariano R. Alonso': 'MARIANO ROQUE ALONSO',
-            'Gral. Bruguez': 'GENERAL BRUGUEZ',
-            'Caaguazu': 'CAAGUAZÚ',
-            'Caazapa - Ava´i': 'CAAZAPÁ - AVAÍ',
-            'Caazapa - Guaira': 'CAAZAPÁ - GUAIRÁ',
-            'San Juan': 'SAN JUAN BAUTISTA',
-            'Tebicuarymi': 'TEBICUARYMÍ',
-            'Ybytymi': 'YBYTYMÍ',
-            'Yguazu': 'YGUASÚ',
-            'Fuerte Olimpo': 'FUERTE OLIMPO',
-            'Bahia Negra': 'BAHÍA NEGRA',
-            '1ra. DI': '1RA. DI',
-            '25 de Diciembre': '25 DE DICIEMBRE',
-            'Acahay': 'ACAHAY',
-            'Alto Parana': 'ALTO PARANÁ',
-            'Altos y Loma Grande': 'ALTOS Y LOMA GRANDE',
-            'Antequera': 'ANTEQUERA',
-            'Aregua': 'AREGUÁ',
-            'Arroyos y Esteros': 'ARROYOS Y ESTEROS',
-            "Ava'í - Cnel. Martinez": "AVA'Í - CNEL. MARTÍNEZ",
-            'Ayola': 'AYOLAS',
-            'Ayolas': 'AYOLAS',
-            'Bañado Sur': 'BAÑADO SUR',
-            'Barrio Roberto L. Pettit': 'BARRIO ROBERTO L. PETTIT',
-            'Bella vista Norte': 'BELLA VISTA NORTE',
-            'Capiata': 'CAPIATÁ',
-            'Carlos A. Lopez': 'CARLOS A. LÓPEZ',
-            'Carmelo Peralta': 'CARMELO PERALTA',
-            'Carayao': 'CARAYAÓ',
-            'Cateura': 'CATEURA',
-            'Cerrito': 'CERRITO',
-            'Chacarita - Parque Caballero': 'CHACARITA - PARQUE CABALLERO',
-            'Chore': 'CHORÉ',
-            'Ciudad del Este': 'CIUDAD DEL ESTE',
-            'Comunidad Indigena Tekoha Sauce': 'COMUNIDAD INDÍGENA TEKOHA SAUCE',
-            'Cordillera': 'CORDILLERA',
-            'Emboscada': 'EMBOSCADA',
-            'Felix Perez Cardozo': 'FÉLIX PÉREZ CARDOZO',
-            'Fernando de la Mora': 'FERNANDO DE LA MORA',
-            'Filadelfia': 'FILADELFIA',
-            'Gral. Diaz': 'GRAL. DÍAZ',
-            'Guarambare': 'GUARAMBARÉ',
-            'Guayaibi': 'GUAYAIBÍ',
-            'Ita': 'ITÁ',
-            'Juan Manuel Frutos': 'JUAN MANUEL FRUTOS',
-            'La Paz': 'LA PAZ',
-            'Lambare': 'LAMBARÉ',
-            'Lima': 'LIMA',
-            'Limpio': 'LIMPIO',
-            'Loma Plata': 'LOMA PLATA',
-            'Lombardo': 'LOMBARDO',
-            'Mcal. Estigarribia': 'MARISCAL ESTIGARRIBIA',
-            'Mbigua': 'MBIGUÁ',
-            'Maria Auxiliadora': 'MARÍA AUXILIADORA',
-            'Mayor Martinez': 'MAYOR MARTÍNEZ',
-            'Nanawa': 'NANAWA',
-            'Nueva Colombia': 'NUEVA COLOMBIA',
-            'Ñemby': 'ÑEMBY',
-            'Paraguari': 'PARAGUARÍ',
-            'Pedro P. Peña': 'PEDRO P. PEÑA',
-            'Pilar': 'PILAR',
-            'Pozo Colorado': 'POZO COLORADO',
-            'Pozo Hondo': 'POZO HONDO',
-            'Puerto Botanico': 'PUERTO BOTÁNICO',
-            'Puerto Casado': 'PUERTO CASADO',
-            'Puerto Pinasco': 'PUERTO PINASCO',
-            'Pto. Pinasco': 'PUERTO PINASCO',
-            'Pto Pinasco': 'PUERTO PINASCO',
-            'Repatriacion': 'REPATRIACIÓN',
-            'Resquin': 'RESQUÍN',
-            'Ricardo Brugada - Chacarita': 'RICARDO BRUGADA - CHACARITA',
-            'RI 3 Corrales': 'R.I. TRES CORRALES',
-            'Rio Verde': 'RÍO VERDE',
-            'Sajonia - Chacarita': 'SAJONIA - CHACARITA',
-            'San Estanislao': 'SAN ESTANISLAO',
-            'San Juan': 'SAN JUAN',
-            'San Lazaro': 'SAN LÁZARO',
-            'San Lorenzo': 'SAN LORENZO',
-            'San Pablo Cocuere': 'SAN PABLO COCUERÉ',
-            'San Pedro del Ycuamandyju': 'SAN PEDRO DEL YCUAMANDIYÚ',
-            'San Vicente Pancholo': 'SAN VICENTE PANCHOLO',
-            'Santa Ana': 'SANTA ANA',
-            'Santa Rosa del Aguaray': 'SANTA ROSA DEL AGUARAY',
-            'Sgto. Jose Felix Lopez': 'SGTO. JOSÉ FÉLIX LÓPEZ',
-            'Sol Sierra Leona': 'SOL SIERRA LEONA',
-            'Tablada Nueva': 'TABLADA NUEVA',
-            'Tacuara': 'TACUARÁ',
-            'Toro Pampa': 'TORO PAMPA',
-            'Tte. Esteban Martinez': 'TTE. ESTEBAN MARTÍNEZ',
-            'Tte. Irala Fernandez': 'TTE. IRALA FERNÁNDEZ',
-            'Union': 'UNIÓN',
-            'Vallemi': 'VALLEMI',
-            'Varios Barrios': 'VARIOS BARRIOS',
-            'varios': 'VARIOS',
-            'Villa Elisa': 'VILLA ELISA',
-            'Villa Hayes': 'VILLA HAYES',
-            'Villa Oliva': 'VILLA OLIVA',
-            'Villalbin': 'VILLALBÍN',
-            'Villeta': 'VILLETTA',
-            'Yataity del Norte': 'YATAITY DEL NORTE',
-            'Yhu': 'YHÚ',
-            'Yrybucua': 'YRYBUCUÁ',
-            'Yvyrarovana': 'YVYRAROVANA',
-            'Yukyty': 'YUKYTY',
-            'Zeballos Cue': 'ZEBALLOS CUE',
-        }
-
-        # Normalizar estandarizacion_distrito para matching insensible a acentos
-        self.estandarizacion_distrito_norm = {}
-        for k, v in self.estandarizacion_distrito.items():
-            self.estandarizacion_distrito_norm[_norm_str(k)] = v
-
-        # Diccionario de normalización de eventos.
-        # Algunas entradas indican que el registro debe eliminarse (p. ej. preposicionamiento).
+        # Diccionario para categorizar eventos de manera consistente
+        # También marcamos qué registros deben eliminarse (como preposicionamientos)
         self.estandarizacion_eventos = {
-            # COVID
+            # COVID: Todas las variantes relacionadas con la pandemia
             'ALB.COVID': 'COVID', 'ALBER.COVID': 'COVID', 'ALBERG.COVID': 'COVID',
             'COVI 19 OLL.': 'COVID', 'COVID 19': 'COVID', 'COVI': 'COVID',
             'VAC.ARATIRI': 'COVID', 'VACUNATORIO SND': 'COVID',
             'APOY.INST.COVID 19': 'COVID', 'APOYO INSTITUCIONAL COVID': 'COVID',
             'ÑANGARECO': 'COVID', 'ÑANGAREKO': 'COVID',
 
-            # INCENDIO
+            # INCENDIO: Eventos relacionados con fuego
             'INC.FORESTAL': 'INCENDIO', 'INCCENDIO': 'INCENDIO', 'INCEND': 'INCENDIO',
             'INCEND. DOMIC.': 'INCENDIO', 'INCENDIO DOMICILIARIO': 'INCENDIO',
             'DERRUMBE': 'INCENDIO', 'INCENDIO FORESTAL': 'INCENDIO',
 
-            # TORMENTA SEVERA
+            # TORMENTA SEVERA: Eventos climáticos
             'EVENTO CLIMATICO': 'TORMENTA SEVERA', 'TORMENTA SEVERA CENTRAL': 'TORMENTA SEVERA',
             'EVENTO CLIMATICO TEMPORAL': 'TORMENTA SEVERA', 'MUNICIPALIDAD': 'TORMENTA SEVERA',
             'TEMPORAL': 'TORMENTA SEVERA', 'TEMPORAL CENTRAL': 'TORMENTA SEVERA',
@@ -408,36 +249,36 @@ class DataCleaner:
             'TEMPORAL - GOBERNACION': 'TORMENTA SEVERA', 'TEMPORAL-GOBERNACIÓN': 'TORMENTA SEVERA',
             'TEMPORAL - GOBERNACIÓN': 'TORMENTA SEVERA', 'TEMPORAL CENTRAL MUNICIPALIDAD': 'TORMENTA SEVERA',
 
-            # SEQUIA
+            # SEQUIA: Falta de agua prolongada
             'SEQ. E INUND.': 'SEQUIA', 'SEQ./INUND.': 'SEQUIA', 'SEQUIA-INUND.': 'SEQUIA',
 
-            # EXTREMA VULNERABILIDAD
+            # EXTREMA VULNERABILIDAD: Ayuda social general
             'COMISION VECINAL': 'EXTREMA VULNERABILIDAD',
             'AYUDA SOLIDARIA': 'EXTREMA VULNERABILIDAD',
 
-            # C.I.D.H.
+            # C.I.D.H.: Casos relacionados con la Corte Interamericana
             'Asistencia de la corte': 'C.I.D.H.',
             'ASISTENCIA DE LA CORTE': 'C.I.D.H.',
             'C I D H': 'C.I.D.H.', 'C.H.D.H': 'C.I.D.H.', 'C.I.D.H': 'C.I.D.H.',
             'C.I.D.H.': 'C.I.D.H.', 'C.ID.H': 'C.I.D.H.', 'CIDH': 'C.I.D.H.',
 
-            # OPERATIVO JAHO'I
+            # OPERATIVO JAHO'I: Operativos especiales
             'OPERATIVO ÑEÑUA': "OPERATIVO JAHO'I", 'OPERATIVO ESPECIAL': "OPERATIVO JAHO'I",
             'OP INVIERNO': "OPERATIVO JAHO'I", 'OP. INVIERNO': "OPERATIVO JAHO'I",
             'OP. ÑEÑUA': "OPERATIVO JAHO'I", 'OP.INVIERNO': "OPERATIVO JAHO'I",
 
-            # INUNDACION
+            # INUNDACION: Eventos de agua
             'INUNDAC.': 'INUNDACION', 'INUNDAIÓN S.': 'INUNDACION',
             'INUNDACION SUBITA': 'INUNDACION', 'INUNDACION " DECLARACION DE EMERGENCIA"': 'INUNDACION',
             'LNUNDACION': 'INUNDACION', 'INUNDACIÓN': 'INUNDACION',
 
-            # OLLA POPULAR
+            # OLLA POPULAR: Programas de alimentación
             'OLLA P': 'OLLA POPULAR', 'OLLA P.': 'OLLA POPULAR', 'OLLA POP': 'OLLA POPULAR',
             'OLLA POP.': 'OLLA POPULAR', 'OLLA POPILAR': 'OLLA POPULAR',
             'OLLA POPOLAR': 'OLLA POPULAR', 'OLLA POPUL': 'OLLA POPULAR',
             'OLLAP.': 'OLLA POPULAR', 'OLLA POPULAR COVID': 'OLLA POPULAR',
 
-            # OTROS
+            # OTROS: Categoría para eventos misceláneos
             'INERAM': 'OTROS', 'INERAM(MINGA)': 'OTROS', 'MINGA': 'OTROS',
             'INDERT': 'OTROS', 'INDI MBYA GUARANI': 'OTROS', 'NIÑEZ': 'OTROS',
             'DGRR 027/22': 'OTROS', 'DGRR 028/22': 'OTROS', 'DONAC': 'OTROS',
@@ -448,7 +289,7 @@ class DataCleaner:
             'APOYO LOG.': 'OTROS', 'OTROS "TEMPORAL"': 'OTROS',
             'APOYO LOGISTICO INDI': 'OTROS',
 
-            # PREPOSICIONAMIENTO (ELIMINAR)
+            # PREPOSICIONAMIENTO: Registros que deben eliminarse (no son asistencia real)
             'PREP.': 'ELIMINAR_REGISTRO', 'PREPOS': 'ELIMINAR_REGISTRO',
             'PREPOS.': 'ELIMINAR_REGISTRO', 'PREPOSIC.': 'ELIMINAR_REGISTRO',
             'PREPOSICION.': 'ELIMINAR_REGISTRO', 'PRE POSICIONAMIENTO': 'ELIMINAR_REGISTRO',
@@ -460,29 +301,333 @@ class DataCleaner:
             'REPOSICION': 'ELIMINAR_REGISTRO', 'REPOSICION DE MATERIALES': 'ELIMINAR_REGISTRO',
             'TRASLADO INTERNO': 'ELIMINAR_REGISTRO', 'PREPOSICIONAMIENTO': 'ELIMINAR_REGISTRO',
 
-            # SIN EVENTO
+            # SIN EVENTO: Cuando no se especifica causa
             'SIN_EVENTO': 'SIN EVENTO', 'DEVOLVIO': 'SIN EVENTO',
             'REFUGIO SEN': 'SIN EVENTO', '': 'SIN EVENTO',
             'SIN EVENTO': 'SIN EVENTO'
         }
 
-    def limpiar_texto(self, texto):
-        """Normaliza un campo de texto: trim, mayúsculas y valor por defecto.
+        # Cache para guardar resultados de comparaciones y hacer el proceso más rápido
+        self._similitud_cache = {}
 
-        Devuelve 'SIN ESPECIFICAR' si el valor es nulo o vacío.
+    def _cargar_barrios_desde_json(self, ruta_json="barrios_por_distrito.json"):
+        """Carga el archivo JSON con los barrios organizados por distrito.
+        
+        Este archivo nos ayuda a validar y corregir localidades usando
+        información oficial sobre qué barrios existen en cada distrito.
+        """
+        try:
+            # Buscar el archivo en varias ubicaciones posibles
+            posibles_rutas = [
+                Path(ruta_json),
+                Path(__file__).parent / ruta_json,
+                Path(__file__).parent.parent / ruta_json
+            ]
+            
+            archivo_encontrado = None
+            for ruta in posibles_rutas:
+                if ruta.exists():
+                    archivo_encontrado = ruta
+                    break
+            
+            if not archivo_encontrado:
+                print("⚠️  Archivo de barrios no encontrado. Continuando sin validación de localidades.")
+                return {}
+            
+            with open(archivo_encontrado, 'r', encoding='utf-8') as f:
+                barrios_data = json.load(f)
+            
+            # Normalizar los nombres para comparaciones consistentes
+            barrios_normalizados = {}
+            for distrito, barrios in barrios_data.items():
+                distrito_norm = self._norm_str(distrito)
+                barrios_norm = [self._norm_str(barrio) for barrio in barrios]
+                barrios_normalizados[distrito_norm] = barrios_norm
+            
+            print(f"✅ Cargados barrios para {len(barrios_normalizados)} distritos desde {archivo_encontrado}")
+            return barrios_normalizados
+            
+        except Exception as e:
+            print(f"⚠️  Error cargando archivo de barrios: {e}")
+            return {}
+
+    def _preparar_localidades_validas(self):
+        """Prepara un conjunto con todas las localidades válidas para búsquedas rápidas."""
+        todas_localidades = set()
+        if self.barrios_por_distrito:
+            for barrios in self.barrios_por_distrito.values():
+                todas_localidades.update(barrios)
+            print(f"✅ Preparadas {len(todas_localidades)} localidades válidas para validación")
+        return todas_localidades
+
+    def _construir_diccionario_distritos(self):
+        """Construye un diccionario completo para corregir nombres de distritos."""
+        estandarizacion = {
+            # CIUDAD DEL ESTE y variantes
+            'C.D.E': 'CIUDAD DEL ESTE',
+            'CDE': 'CIUDAD DEL ESTE', 
+            'C DE E': 'CIUDAD DEL ESTE',
+            'CIUDAD DEL ESTE': 'CIUDAD DEL ESTE',
+            'C. DEL ESTE': 'CIUDAD DEL ESTE',
+            
+            # ASUNCIÓN y variantes
+            'ASUNCION': 'ASUNCIÓN',
+            'ASUNCIÒN': 'ASUNCIÓN',
+            'ASU': 'ASUNCIÓN',
+            'A.S.N.C': 'ASUNCIÓN',
+            
+            # ENCARNACIÓN y variantes
+            'ENCARNACION': 'ENCARNACIÓN',
+            'ENCARNACIÒN': 'ENCARNACIÓN',
+            'ENC': 'ENCARNACIÓN',
+            
+            # CORONEL OVIEDO y variantes
+            'CNEL OVIEDO': 'CORONEL OVIEDO',
+            'CNEL. OVIEDO': 'CORONEL OVIEDO',
+            'C. OVIEDO': 'CORONEL OVIEDO',
+            'CORONEL OVIEDO': 'CORONEL OVIEDO',
+            
+            # PEDRO JUAN CABALLERO y variantes
+            'PEDRO JUAN C.': 'PEDRO JUAN CABALLERO',
+            'PEDRO JUAN': 'PEDRO JUAN CABALLERO',
+            'PJC': 'PEDRO JUAN CABALLERO',
+            'PEDRO JUAN CABALLERO': 'PEDRO JUAN CABALLERO',
+            
+            # VILLARRICA y variantes
+            'VILLA RICA': 'VILLARRICA',
+            'VILLARICA': 'VILLARRICA',
+            
+            # CONCEPCIÓN y variantes
+            'CONCEPCION': 'CONCEPCIÓN',
+            'CONCEPCIÒN': 'CONCEPCIÓN',
+            
+            # CAACUPÉ y variantes
+            'CAACUPE': 'CAACUPÉ',
+            'CAACUPÈ': 'CAACUPÉ',
+            
+            # CAPIATÁ y variantes
+            'CAPIATA': 'CAPIATÁ',
+            'CAPIATÀ': 'CAPIATÁ',
+            
+            # ITÁ y variantes
+            'ITÀ': 'ITÁ',
+            'ITA': 'ITÁ',
+            
+            # LAMBARÉ y variantes
+            'LAMBARE': 'LAMBARÉ',
+            'LAMBARÈ': 'LAMBARÉ',
+            
+            # YPANÉ y variantes
+            'YPANE': 'YPANÉ',
+            'YPANÈ': 'YPANÉ',
+            
+            # PRESIDENTE FRANCO y variantes
+            'PTE FRANCO': 'PRESIDENTE FRANCO',
+            'P.FRANCO': 'PRESIDENTE FRANCO',
+            'PRES. FRANCO': 'PRESIDENTE FRANCO',
+            
+            # HERNANDARIAS y variantes
+            'HERNANDARIAS': 'HERNANDARIAS',
+            'HERNANDARÍAS': 'HERNANDARIAS',
+            
+            # SAN LORENZO y variantes
+            'SAN LORENZO': 'SAN LORENZO',
+            'S.LORENZO': 'SAN LORENZO',
+            
+            # FERNANDO DE LA MORA y variantes
+            'FDO DE LA MORA': 'FERNANDO DE LA MORA',
+            'FERNANDO MORA': 'FERNANDO DE LA MORA',
+            'F. DE LA MORA': 'FERNANDO DE LA MORA',
+            
+            # LAMBARÉ y variantes
+            'LAMBARE': 'LAMBARÉ',
+            
+            # ÑEMBY y variantes
+            'NEMBY': 'ÑEMBY',
+            
+            # MARIANO ROQUE ALONSO y variantes
+            'MROQUE ALONSO': 'MARIANO ROQUE ALONSO',
+            'M. ROQUE ALONSO': 'MARIANO ROQUE ALONSO',
+            'MROA': 'MARIANO ROQUE ALONSO',
+            
+            # VILLA ELISA y variantes
+            'VILLA ELISA': 'VILLA ELISA',
+            'V. ELISA': 'VILLA ELISA',
+            
+            # LIMPIO y variantes
+            'LIMPIO': 'LIMPIO',
+            'LIMPIO CENTRO': 'LIMPIO',
+            
+            # LUQUE y variantes
+            'LUQUE': 'LUQUE',
+            'LUQUE CENTRO': 'LUQUE',
+            
+            # AREGUÁ y variantes
+            'AREGUA': 'AREGUÁ',
+            'AREGUÀ': 'AREGUÁ',
+            
+            # GUARAMBARÉ y variantes
+            'GUARAMBARE': 'GUARAMBARÉ',
+            'GUARAMBARÈ': 'GUARAMBARÉ',
+            
+            # ITAUGUÁ y variantes
+            'ITAUGA': 'ITAUGUÁ',
+            'ITAUGAU': 'ITAUGUÁ',
+            
+            # YPACARAÍ y variantes
+            'YPACARAI': 'YPACARAÍ',
+            'YPACARAÌ': 'YPACARAÍ',
+            
+            # VILLETTA y variantes
+            'VILLETA': 'VILLETTA',
+            'VILLET A': 'VILLETTA',
+            
+            # SALTO DEL GUAIRÁ y variantes
+            'SALTO GUAIRA': 'SALTO DEL GUAIRÁ',
+            'SALTO DEL GUAIRA': 'SALTO DEL GUAIRÁ',
+            
+            # FILADELFIA y variantes
+            'FILADELFIA': 'FILADELFIA',
+            'FILADELF.': 'FILADELFIA',
+            
+            # LOMA PLATA y variantes
+            'LOMA PLATA': 'LOMA PLATA',
+            'L. PLATA': 'LOMA PLATA',
+            
+            # MARISCAL ESTIGARRIBIA y variantes
+            'M. ESTIGARRIBIA': 'MARISCAL ESTIGARRIBIA',
+            'MARISCAL ESTIG.': 'MARISCAL ESTIGARRIBIA',
+            
+            # BELLA VISTA NORTE y variantes
+            'BELLA VISTA N.': 'BELLA VISTA NORTE',
+            'B.VISTA NORTE': 'BELLA VISTA NORTE',
+            
+            # CAPITÁN BADO y variantes
+            'CAPITAN BADO': 'CAPITÁN BADO',
+            'CAP. BADO': 'CAPITÁN BADO',
+            
+            # FUERTE OLIMPO y variantes
+            'F. OLIMPO': 'FUERTE OLIMPO',
+            'FUERTE OL.': 'FUERTE OLIMPO',
+            
+            # PUERTO CASADO y variantes
+            'PTO CASADO': 'PUERTO CASADO',
+            'P. CASADO': 'PUERTO CASADO'
+        }
+        
+        return estandarizacion
+
+    def _calcular_similitud(self, texto1, texto2):
+        """Calcula qué tan parecidos son dos textos.
+        
+        Usa un algoritmo que cuenta cuántos cambios se necesitan para
+        convertir un texto en otro. Entre más bajo el número, más parecidos son.
+        """
+        key = (texto1, texto2)
+        if key in self._similitud_cache:
+            return self._similitud_cache[key]
+        
+        # Normalizamos los textos para comparar sin importar acentos o mayúsculas
+        norm1 = self._norm_str(texto1)
+        norm2 = self._norm_str(texto2)
+        
+        # Calculamos la similitud (0, 1)
+        similitud = Levenshtein.ratio(norm1, norm2)
+        
+        self._similitud_cache[key] = similitud
+        return similitud
+
+    def _buscar_mejor_coincidencia(self, texto, opciones, umbral=0.7):
+        """Encuentra la opción que más se parece al texto dado.
+        
+        Primero busca coincidencia exacta, y si no encuentra, busca
+        la opción más similar que supere el umbral de parecido.
+        """
+        if not texto or not opciones:
+            return None
+        
+        texto_norm = self._norm_str(texto)
+        
+        # Primero intentamos encontrar una coincidencia exacta
+        for opcion in opciones:
+            if self._norm_str(opcion) == texto_norm:
+                return opcion
+        
+        # Si no hay exacta, buscamos la más similar
+        mejor_coincidencia = None
+        mejor_puntaje = 0
+        
+        for opcion in opciones:
+            puntaje = self._calcular_similitud(texto, opcion)
+            if puntaje > mejor_puntaje and puntaje >= umbral:
+                mejor_puntaje = puntaje
+                mejor_coincidencia = opcion
+        
+        return mejor_coincidencia
+
+    def _es_localidad_valida_en_json(self, distrito, localidad):
+        """Verifica si una localidad existe exactamente en el JSON para ese distrito."""
+        if not self.barrios_por_distrito:
+            return False
+            
+        distrito_norm = self._norm_str(distrito)
+        localidad_norm = self._norm_str(localidad)
+        
+        return (distrito_norm in self.barrios_por_distrito and 
+                localidad_norm in self.barrios_por_distrito[distrito_norm])
+
+    def _buscar_localidad_en_json(self, distrito, localidad, umbral=0.85):
+        """Busca una localidad en el JSON del distrito usando Levenshtein."""
+        if not self.barrios_por_distrito:
+            return None
+            
+        distrito_norm = self._norm_str(distrito)
+        if distrito_norm not in self.barrios_por_distrito:
+            return None
+        
+        barrios_del_distrito = self.barrios_por_distrito[distrito_norm]
+        return self._buscar_mejor_coincidencia(localidad, barrios_del_distrito, umbral=umbral)
+
+    def _buscar_localidad_en_todos_distritos(self, localidad, umbral=0.8):
+        """Busca una localidad en todos los distritos del JSON."""
+        if not self.barrios_por_distrito:
+            return None, None
+        
+        # Recolectar todos los barrios de todos los distritos
+        todos_los_barrios = []
+        mapeo_barrio_a_distrito = {}
+        
+        for distrito, barrios in self.barrios_por_distrito.items():
+            for barrio in barrios:
+                todos_los_barrios.append(barrio)
+                mapeo_barrio_a_distrito[barrio] = distrito
+        
+        mejor_coincidencia = self._buscar_mejor_coincidencia(localidad, todos_los_barrios, umbral=umbral)
+        
+        if mejor_coincidencia:
+            distrito_correcto = mapeo_barrio_a_distrito.get(mejor_coincidencia)
+            return mejor_coincidencia, distrito_correcto
+        
+        return None, None
+
+    def limpiar_texto(self, texto):
+        """Limpia un texto: quita espacios extra, convierte a mayúsculas y maneja valores vacíos.
+        
+        Esta es una de las transformaciones más básicas pero importantes.
+        Asegura que todos los textos sigan el mismo formato.
         """
         if pd.isna(texto) or texto is None or str(texto).strip() == '':
             return 'SIN ESPECIFICAR'
         return str(texto).strip().upper()
 
     def limpiar_numero(self, value):
-        """Convierte a entero de forma segura.
-
-        Acepta strings con coma o punto decimales. Devuelve 0 si no se puede
-        parsear.
+        """Convierte un valor a número entero de manera segura.
+        
+        Acepta números con coma o punto decimal y los convierte a enteros.
+        Si no puede convertirlo, devuelve 0 en lugar de generar error.
         """
         try:
-            # Aceptar cadenas como '1,5' o '1.5'
+            # Aceptamos formatos como '1,5' o '1.5'
             if isinstance(value, str):
                 value = value.replace(',', '.')
             return int(float(value)) if value not in [None, '', np.nan] else 0
@@ -490,13 +635,13 @@ class DataCleaner:
             return 0
 
     def estandarizar_departamento_robusto(self, departamento):
-        """Normaliza el nombre de departamento con varias heurísticas.
-
-        Reglas aplicadas, en orden:
-        1) Lookup directo en el diccionario de correcciones.
-        2) Si contiene separadores, toma la primera parte y vuelve a buscar.
-        3) Busca coincidencias parciales con los nombres válidos.
-        4) Si no se identifica, devuelve 'CENTRAL' por defecto.
+        """Convierte cualquier variante de nombre de departamento al nombre oficial.
+        
+        Sigue una estrategia de 4 pasos:
+        1. Busca en el diccionario de correcciones
+        2. Si tiene separadores, prueba con la primera parte
+        3. Busca coincidencias parciales
+        4. Si no encuentra, usa 'CENTRAL' por defecto
         """
         if pd.isna(departamento) or departamento is None:
             return 'CENTRAL'
@@ -504,48 +649,174 @@ class DataCleaner:
         depto_limpio = self.limpiar_texto(departamento)
         depto_norm = self._norm_str(depto_limpio)
 
-        # Si el registrador escribió el nombre del distrito en la columna
-        # "DEPARTAMENTO", mapearlo al departamento correspondiente (usando mapa normalizado).
+        # Si el usuario puso un distrito en lugar del departamento, lo corregimos
         if depto_norm in self.distrito_a_departamento_norm:
             return self.distrito_a_departamento_norm[depto_norm]
 
-        # 1. Búsqueda directa en el diccionario normalizado
+        # 1. Busqueda directa en el diccionario de correcciones
         if depto_norm in self.estandarizacion_dept_norm:
             return self.estandarizacion_dept_norm[depto_norm]
 
-        # 2. Si contiene separadores, probar con la primera parte
+        # 2. Si el texto contiene separadores, probamos con la primera parte
         for sep in [' - ', ' / ', ', ', ' Y ']:
             if sep in depto_limpio:
                 primera_parte = depto_limpio.split(sep)[0].strip()
                 if primera_parte in self.estandarizacion_dept:
                     return self.estandarizacion_dept[primera_parte]
 
-        # 3. Coincidencia parcial con nombres válidos
-        # 3. Coincidencia parcial con nombres válidos (normalizando también)
+        # 3. Buscamos nombres oficiales dentro del texto
         for depto_estandar in self.departamento_orden.keys():
             if self._norm_str(depto_estandar) in depto_norm:
                 return depto_estandar
 
-        # 4. Fallback por defecto
+        # 4. Si no logramos identificar, usamos Central por defecto
         return 'CENTRAL'
 
+    def estandarizar_distrito_robusto(self, distrito, departamento=None):
+        """Normaliza nombres de distritos usando información contextual y similitud.
+        
+        Usa el departamento como pista para buscar solo en distritos de esa zona,
+        haciendo la búsqueda más precisa.
+        """
+        if pd.isna(distrito) or distrito is None:
+            return 'SIN ESPECIFICAR'
+
+        distrito_limpio = self.limpiar_texto(distrito)
+        
+        # Si ya está marcado como sin especificar, no hacemos nada
+        if distrito_limpio == 'SIN ESPECIFICAR':
+            return distrito_limpio
+
+        distrito_norm = self._norm_str(distrito_limpio)
+
+        # 1. Busqueda directa en correcciones conocidas
+        if distrito_norm in self.estandarizacion_distritos_norm:
+            return self.estandarizacion_distritos_norm[distrito_norm]
+
+        # 2. Si sabemos el departamento, buscamos solo en sus distritos
+        opciones_busqueda = self.todos_distritos_validos
+        if departamento:
+            depto_estandar = self.estandarizar_departamento_robusto(departamento)
+            if depto_estandar in self.DISTRITOS_POR_DEPARTAMENTO:
+                opciones_busqueda = self.DISTRITOS_POR_DEPARTAMENTO[depto_estandar]
+
+        # 3. Buscamos la opción más similar
+        mejor_coincidencia = self._buscar_mejor_coincidencia(
+            distrito_limpio, opciones_busqueda, umbral=0.6
+        )
+
+        if mejor_coincidencia:
+            return mejor_coincidencia
+
+        # 4. Si no encontramos en el departamento, buscamos en todos los distritos
+        if departamento:
+            mejor_coincidencia = self._buscar_mejor_coincidencia(
+                distrito_limpio, self.todos_distritos_validos, umbral=0.6
+            )
+            if mejor_coincidencia:
+                return mejor_coincidencia
+
+        # 5. Si todo falla, mantenemos el texto original pero limpio
+        return distrito_limpio
+
+    def corregir_distrito_en_localidad(self, localidad, distrito_actual):
+        """Detecta cuando alguien puso el distrito en el campo de localidad.
+        
+        Esto pasa frecuentemente cuando la persona llena los formularios.
+        Si detectamos un distrito en localidad y el campo distrito está vacío,
+        movemos el valor al campo correcto.
+        """
+        if pd.isna(localidad) or localidad is None:
+            return localidad, distrito_actual
+
+        localidad_limpia = self.limpiar_texto(localidad)
+        
+        if localidad_limpia == 'SIN ESPECIFICAR':
+            return localidad_limpia, distrito_actual
+
+        # Buscamos si la localidad coincide con algún distrito válido
+        distrito_en_localidad = self._buscar_mejor_coincidencia(
+            localidad_limpia, self.todos_distritos_validos, umbral=0.8
+        )
+
+        if distrito_en_localidad:
+            # Encontramos un distrito en la localidad
+            if distrito_actual in ['SIN ESPECIFICAR', '']:
+                # Si el distrito está vacío, movemos el valor
+                return 'SIN ESPECIFICAR', distrito_en_localidad
+            else:
+                # Si ya hay distrito, solo limpiamos la localidad
+                return 'SIN ESPECIFICAR', distrito_actual
+
+        return localidad_limpia, distrito_actual
+
+    def estandarizar_localidad_robusta(self, localidad, distrito_estandarizado):
+        """Limpia y valida nombres de localidades usando JSON y Levenshtein.
+        
+        Sigue una estrategia combinada:
+        1. Verificación exacta en JSON (rápido y preciso)
+        2. Búsqueda por similitud en JSON del distrito
+        3. Búsqueda global en todos los barrios
+        4. Reglas heurísticas como fallback
+        """
+        if pd.isna(localidad) or localidad is None:
+            return 'SIN ESPECIFICAR'
+
+        localidad_limpia = self.limpiar_texto(localidad)
+        
+        if localidad_limpia == 'SIN ESPECIFICAR':
+            return localidad_limpia
+
+        # Si la localidad es igual al distrito, no tiene sentido repetir
+        if localidad_limpia == distrito_estandarizado:
+            return 'SIN ESPECIFICAR'
+
+        # ESTRATEGIA 1: Verificación exacta en JSON
+        if self._es_localidad_valida_en_json(distrito_estandarizado, localidad_limpia):
+            return localidad_limpia  # ¡Encontrado exactamente!
+
+        # ESTRATEGIA 2: Búsqueda por similitud en el distrito actual
+        correccion_local = self._buscar_localidad_en_json(distrito_estandarizado, localidad_limpia, umbral=0.85)
+        if correccion_local:
+            print(f"    🔄 Corrección localidad (mismo distrito): '{localidad_limpia}' → '{correccion_local}'")
+            return correccion_local
+
+        # ESTRATEGIA 3: Búsqueda global en todos los distritos
+        if localidad_limpia not in ['', 'SIN ESPECIFICAR'] and len(localidad_limpia) > 3:
+            correccion_global, distrito_correcto = self._buscar_localidad_en_todos_distritos(localidad_limpia, umbral=0.8)
+            if correccion_global:
+                print(f"    ⚠️  Localidad '{localidad_limpia}' corregida a '{correccion_global}' (pertenece a distrito '{distrito_correcto}')")
+                return correccion_global
+
+        # ESTRATEGIA 4: Reglas heurísticas (fallback)
+        palabras_clave_localidad = ['BARRIO', 'COLONIA', 'COMUNIDAD', 'ALDEA', 'ASENTAMIENTO', 'CANTON']
+        for palabra in palabras_clave_localidad:
+            if palabra in localidad_limpia:
+                return localidad_limpia
+
+        # Nombres muy cortos probablemente son errores
+        if len(localidad_limpia) < 3:
+            return 'SIN ESPECIFICAR'
+
+        # Si pasó todas las validaciones, la mantenemos
+        return localidad_limpia
 
     def estandarizar_evento_robusto(self, evento):
-        """Normaliza el campo 'EVENTO'.
-
-        Intenta un lookup directo y, si falla, busca palabras clave que indiquen
-        la categoría. Si no encuentra nada, devuelve 'SIN EVENTO'.
+        """Categoriza eventos en tipos estandarizados.
+        
+        Convierte las muchas formas en que la gente describe los eventos
+        en categorías consistentes para análisis.
         """
         if pd.isna(evento) or evento is None:
             return 'SIN EVENTO'
 
         evento_limpio = self.limpiar_texto(evento)
 
-        # 1. Lookup directo
+        # 1. Busqueda directa en el diccionario
         if evento_limpio in self.estandarizacion_eventos:
             return self.estandarizacion_eventos[evento_limpio]
 
-        # 2. Búsqueda por palabras clave (heurística rápida)
+        # 2. Busqueda por palabras clave dentro del texto
         palabras_clave = {
             'COVID': 'COVID', 'INCENDIO': 'INCENDIO', 'TORMENTA': 'TORMENTA SEVERA',
             'TEMPORAL': 'TORMENTA SEVERA', 'INUNDACION': 'INUNDACION',
@@ -560,182 +831,125 @@ class DataCleaner:
             if palabra in evento_limpio:
                 return evento_estandar
 
-        # 3. Sin coincidencias: marcar como sin evento
+        # 3. Si no coincide con nada, marcamos como sin evento
         return 'SIN EVENTO'
 
-
-    def inferir_distrito_desde_localidad(self, localidad):
-        """Dado el nombre de una localidad limpia, devolver (distrito, departamento)
-
-        Usa el diccionario `self.localidad_map` cuando sea posible.
-        Devuelve None si no hay una inferencia clara.
-        """
-        if pd.isna(localidad) or localidad is None:
-            return None
-
-        loc_limpia = self.limpiar_texto(localidad)
-        loc_norm = self._norm_str(loc_limpia)
-        if loc_norm in self.localidad_map_norm:
-            info = self.localidad_map_norm[loc_norm]
-            return info.get('distrito'), info.get('departamento')
-        return None
-
-
     def normalize_locations(self, df):
-        """Normaliza y corrige columnas de LOCALIDAD, DISTRITO y DEPARTAMENTO.
-
-        Reglas principales:
-        - Si LOCALIDAD está presente y el map conoce su distrito/departamento,
-          rellenar DISTRITO/DEPARTAMENTO desde el mapa.
-        - Si DEPARTAMENTO contiene un nombre de distrito (según
-          `self.distrito_a_departamento`), mover ese valor a DISTRITO y
-          reemplazar DEPARTAMENTO por el departamento correspondiente.
-        - Si DISTRITO está presente pero DEPARTAMENTO está vacío, inferir
-          DEPARTAMENTO mediante `self.distrito_a_departamento`.
-
-        Devuelve el DataFrame modificado (modifica in-place también).
+        """Orquesta la normalización completa de todas las columnas de ubicación.
+        
+        Sigue un orden específico porque cada paso depende del anterior:
+        1. Departamentos (la base)
+        2. Distritos (usando departamento como contexto)
+        3. Corrección de distritos en localidades
+        4. Localidades (limpieza final con JSON y Levenshtein)
         """
         if df is None or len(df) == 0:
             return df
 
-        # Asegurar columnas mínimas
+        # Aseguramos que existan las columnas mínimas
         for col in ['LOCALIDAD', 'DISTRITO', 'DEPARTAMENTO']:
             if col not in df.columns:
                 df[col] = 'SIN ESPECIFICAR'
 
+        print("  🗺️  Estandarizando ubicaciones...")
         cambios = 0
 
-        # Preparar conjunto de claves normalizadas de distritos para comparaciones rápidas
-        distrito_norm_keys = set()
-        distrito_norm_keys.update(self.distrito_a_departamento_norm.keys())
-        distrito_norm_keys.update(self.distrito_canonical_map.keys())
-        if hasattr(self, 'estandarizacion_distrito_norm'):
-            distrito_norm_keys.update(self.estandarizacion_distrito_norm.keys())
+        # 1. Primero estandarizamos departamentos (la base geográfica)
+        if 'DEPARTAMENTO' in df.columns:
+            for idx, row in df.iterrows():
+                depto_original = row.get('DEPARTAMENTO', '')
+                depto_estandarizado = self.estandarizar_departamento_robusto(depto_original)
+                if depto_estandarizado != depto_original:
+                    df.at[idx, 'DEPARTAMENTO'] = depto_estandarizado
+                    cambios += 1
 
+        # 2. Luego estandarizamos distritos (con información del departamento)
+        if 'DISTRITO' in df.columns:
+            for idx, row in df.iterrows():
+                distrito_original = row.get('DISTRITO', '')
+                departamento_actual = row.get('DEPARTAMENTO', '')
+                distrito_estandarizado = self.estandarizar_distrito_robusto(
+                    distrito_original, departamento_actual
+                )
+                if distrito_estandarizado != distrito_original:
+                    df.at[idx, 'DISTRITO'] = distrito_estandarizado
+                    cambios += 1
+        
+        # 2b. Corregimos departamentos basados en distritos estandarizados
         for idx, row in df.iterrows():
-            localidad = row.get('LOCALIDAD', '')
-            distrito = row.get('DISTRITO', '')
-            departamento = row.get('DEPARTAMENTO', '')
-
-            loc_limpia = self.limpiar_texto(localidad)
-            dist_limpia = self.limpiar_texto(distrito)
-            depto_limpio = self.limpiar_texto(departamento)
-
-            # Normalizaciones para matching sin acentos
-            loc_norm = self._norm_str(loc_limpia)
-            dist_norm = self._norm_str(dist_limpia)
-            depto_norm = self._norm_str(depto_limpio)
-
-            # 0) Estandarizar DISTRITO si coincide con alguna clave parcial del diccionario
-            if dist_limpia not in ['SIN ESPECIFICAR', ''] and hasattr(self, 'estandarizacion_distrito_norm'):
-                for k in self.estandarizacion_distrito_norm.keys():
-                    if k in dist_norm:
-                        df.at[idx, 'DISTRITO'] = self.estandarizacion_distrito_norm[k]
-                        dist_limpia = df.at[idx, 'DISTRITO']
-                        dist_norm = self._norm_str(dist_limpia)
-                        cambios += 1
-                        break
-
-            # 1) Si la localidad es conocida, usar el mapa como fuente de verdad
-            inferred = None
-            if loc_limpia not in ['SIN ESPECIFICAR', '']:
-                inferred = self.inferir_distrito_desde_localidad(loc_limpia)
-
-            if inferred:
-                inf_dist, inf_depto = inferred
-                # Solo escribir si hay diferencia o falta de dato
-                if dist_limpia in ['SIN ESPECIFICAR', ''] or dist_limpia != inf_dist:
-                    # Usar forma canónica del distrito cuando esté disponible
-                    canonic = self.distrito_canonical_map.get(self._norm_str(inf_dist), inf_dist)
-                    # Si existe una estandarizacion_distrito que coincida parcialmente, usarla
-                    canonic_norm = self._norm_str(canonic)
-                    if hasattr(self, 'estandarizacion_distrito_norm'):
-                        for k in self.estandarizacion_distrito_norm.keys():
-                            if k in canonic_norm:
-                                canonic = self.estandarizacion_distrito_norm[k]
-                                break
-                    df.at[idx, 'DISTRITO'] = canonic
+            distrito_actual = row.get('DISTRITO', '')
+            departamento_actual = row.get('DEPARTAMENTO', '')
+            
+            # Si el distrito es conocido, obtenemos su departamento correcto
+            distrito_norm = self._norm_str(distrito_actual)
+            if distrito_norm in self.distrito_a_departamento_norm:
+                departamento_correcto = self.distrito_a_departamento_norm[distrito_norm]
+                
+                # Si el departamento actual no coincide, lo corregimos
+                if departamento_actual != departamento_correcto:
+                    df.at[idx, 'DEPARTAMENTO'] = departamento_correcto
                     cambios += 1
-                if depto_limpio in ['SIN ESPECIFICAR', ''] or depto_limpio != inf_depto:
-                    df.at[idx, 'DEPARTAMENTO'] = inf_depto
-                    cambios += 1
-                continue
+                    print(f"    🔄 Corrección: Distrito '{distrito_actual}' → Departamento '{departamento_correcto}'")
 
-            # 2) Si en DEPARTAMENTO hay un distrito (registrador se equivocó), moverlo
-            if depto_norm in self.distrito_a_departamento_norm:
-                mapped_depto = self.distrito_a_departamento_norm[depto_norm]
-                # Mover el valor de departamento al campo DISTRITO
-                # Establecer forma canónica del distrito si está disponible
-                canonic_depto_as_distr = self.distrito_canonical_map.get(depto_norm, depto_limpio)
-                df.at[idx, 'DISTRITO'] = canonic_depto_as_distr
-                df.at[idx, 'DEPARTAMENTO'] = mapped_depto
+        # 3. Detectamos y corregimos distritos en el campo de localidad
+        for idx, row in df.iterrows():
+            localidad_original = row.get('LOCALIDAD', '')
+            distrito_actual = row.get('DISTRITO', '')
+            
+            localidad_corregida, distrito_corregido = self.corregir_distrito_en_localidad(
+                localidad_original, distrito_actual
+            )
+            
+            if localidad_corregida != localidad_original:
+                df.at[idx, 'LOCALIDAD'] = localidad_corregida
                 cambios += 1
-                continue
+            
+            if distrito_corregido != distrito_actual:
+                df.at[idx, 'DISTRITO'] = distrito_corregido
+                cambios += 1
 
-            # 3) Si DISTRITO está presente pero DEPARTAMENTO vacío, completar
-            if dist_limpia not in ['SIN ESPECIFICAR', ''] and (depto_limpio in ['SIN ESPECIFICAR', '']):
-                if dist_norm in self.distrito_a_departamento_norm:
-                    df.at[idx, 'DEPARTAMENTO'] = self.distrito_a_departamento_norm[dist_norm]
-                    # Asegurar que DISTRITO tenga la forma canónica
-                    df.at[idx, 'DISTRITO'] = self.distrito_canonical_map.get(dist_norm, dist_limpia)
-                    cambios += 1
+        # 4. Finalmente estandarizamos localidades (¡ahora con JSON y Levenshtein!)
+        for idx, row in df.iterrows():
+            localidad_actual = row.get('LOCALIDAD', '')
+            distrito_estandarizado = row.get('DISTRITO', '')
+            
+            localidad_estandarizada = self.estandarizar_localidad_robusta(
+                localidad_actual, distrito_estandarizado
+            )
+            
+            if localidad_estandarizada != localidad_actual:
+                df.at[idx, 'LOCALIDAD'] = localidad_estandarizada
+                cambios += 1
 
-            # 4) Si la LOCALIDAD contiene el nombre de un DISTRITO (es decir, el
-            # registrador escribió el distrito en el campo LOCALIDAD), entonces
-            # considerarlo como no especificado para LOCALIDAD y dejar 'SIN ESPECIFICAR'.
-            # Esto evita duplicar el mismo nombre como localidad y distrito.
-            try:
-                if loc_limpia not in ['SIN ESPECIFICAR', '']:
-                    # Si la localidad normalizada coincide exactamente con un distrito
-                    # conocido, o contiene su nombre (casos como 'ASUNCIÓN - BARRIO'),
-                    # marcar como no especificada.
-                    matched = False
-                    if loc_norm in distrito_norm_keys:
-                        matched = True
-                    else:
-                        for kdist in distrito_norm_keys:
-                            if kdist and kdist in loc_norm:
-                                matched = True
-                                break
-
-                    if matched:
-                        df.at[idx, 'LOCALIDAD'] = 'SIN ESPECIFICAR'
-                        cambios += 1
-            except Exception:
-                # No queremos que una excepción aquí rompa la normalización global
-                pass
-
+        # Reportamos cuántos cambios hicimos
         if cambios > 0:
-            print(f"  Normalización de ubicaciones aplicada. Cambios realizados: {cambios}")
+            print(f"  ✅ Normalización de ubicaciones aplicada. Cambios realizados: {cambios}")
         else:
-            print("  Normalización de ubicaciones: no se detectaron cambios relevantes.")
+            print("  ℹ️  Normalización de ubicaciones: no se detectaron cambios relevantes.")
 
         return df
 
-
     def post_process_eventos_with_aids(self, row):
-        """Inferencia de evento a partir de insumos y contexto de la fila.
-
-        Aplica reglas heurísticas (kits, chapas, departamento) para inferir
-        un 'EVENTO' cuando no viene especificado. Devuelve 'ELIMINAR_REGISTRO'
-        para registros que deben descartarse (p. ej. preposicionamiento).
+        """Infiere el tipo de evento cuando no está especificado.
+        
+        Usa pistas como los tipos de insumos entregados y la ubicación
+        para adivinar qué tipo de evento causó la ayuda.
         """
         evento = row.get('EVENTO', 'SIN EVENTO')
 
-        # Si es preposicionamiento, lo eliminamos
+        # Filtramos registros de preposicionamiento (no son ayuda real)
         if evento == 'ELIMINAR_REGISTRO':
             return 'ELIMINAR_REGISTRO'
 
-        # Si no tiene evento, aplicamos las reglas enriquecidas
+        # Solo inferimos si no hay evento especificado
         if evento == 'SIN EVENTO' or evento == '' or evento is None:
-            # Asegurar que DEPARTAMENTO está en mayúsculas para la comparación
             departamento = str(row.get('DEPARTAMENTO', '')).upper()
 
-            # Regla 1: departamentos secos -> SEQUIA
+            # REGLA 1: Departamentos tradicionalmente secos → SEQUIA
             if departamento in ['BOQUERON', 'ALTO PARAGUAY', 'PDTE. HAYES']:
                 return 'SEQUIA'
 
-            # Obtener valores de kits y materiales (usando limpieza robusta)
+            # Calculamos cantidades de insumos
             kit_b = self.limpiar_numero(row.get('KIT B', row.get('KIT_B', 0)))
             kit_a = self.limpiar_numero(row.get('KIT A', row.get('KIT_A', 0)))
             total_kits = kit_b + kit_a
@@ -743,14 +957,7 @@ class DataCleaner:
             chapa_zinc = self.limpiar_numero(row.get('CHAPA ZINC', row.get('CHAPA_ZINC', 0)))
             chapa_fibrocemento = self.limpiar_numero(row.get('CHAPA FIBROCEMENTO', row.get('CHAPA_FIBROCEMENTO', 0)))
 
-            # Suma de materiales para Regla 4 y 5
-            materiales_cols = [
-                'CHAPA FIBROCEMENTO', 'CHAPA_FIBROCEMENTO', 'CHAPA ZINC', 'CHAPA_ZINC',
-                'COLCHONES', 'FRAZADAS', 'TERCIADAS', 'PUNTALES', 'CARPAS PLASTICAS', 'CARPAS_PLASTICAS'
-            ]
-            
-            # Nota: Usamos la suma total de *todos* los insumos, incluyendo kits y materiales para la lógica
-            # Esto es clave para las reglas de inferencia.
+            # Sumamos materiales no kits
             materiales_no_kits_cols = [
                 'CHAPA FIBROCEMENTO', 'CHAPA_FIBROCEMENTO', 'CHAPA ZINC', 'CHAPA_ZINC',
                 'COLCHONES', 'FRAZADAS', 'TERCIADAS', 'PUNTALES', 'CARPAS PLASTICAS', 'CARPAS_PLASTICAS'
@@ -758,83 +965,68 @@ class DataCleaner:
             materiales = sum(self.limpiar_numero(row.get(field, 0)) for field in materiales_no_kits_cols)
             total_insumos = total_kits + materiales
 
-            # Regla 2: pocos kits pero hay materiales -> INCENDIO
-            # (0 < total_kits < 10 y materiales > 0)
+            # REGLA 2: Pocos kits + materiales → INCENDIO
             if total_kits < 10 and total_kits > 0 and materiales > 0:
                 return 'INCENDIO'
 
-            # Regla 4: en CAPITAL, solo kits (sin materiales) -> INUNDACION
+            # REGLA 4: En capital, solo kits → INUNDACION
             if departamento == 'CAPITAL' and total_kits > 0 and materiales == 0:
                 return 'INUNDACION'
 
-            # Regla 5: solo chapa_zinc presente -> TORMENTA SEVERA
-            # La condición `materiales == chapa_zinc` asegura que solo hay ese material.
-            if chapa_zinc > 0 and total_kits == 0 and chapa_fibrocemento == 0 and materiales == chapa_zinc:
+            # REGLA 5: Solo chapa zinc → TORMENTA SEVERA
+            if chapa_zinc > 0 and total_kits == 0 and chapa_fibrocemento == 0:
                 return 'TORMENTA SEVERA'
 
-            # Regla 6: solo chapa_fibrocemento presente -> INUNDACION
-            # La condición `materiales == chapa_fibrocemento` asegura que solo hay ese material.
-            if chapa_fibrocemento > 0 and total_kits == 0 and chapa_zinc == 0 and materiales == chapa_fibrocemento:
+            # REGLA 6: Solo chapa fibrocemento → INUNDACION
+            if chapa_fibrocemento > 0 and total_kits == 0 and chapa_zinc == 0:
                 return 'INUNDACION'
 
-            # Regla 7: si hay kits -> EXTREMA VULNERABILIDAD
+            # REGLA 7: Si hay kits → EXTREMA VULNERABILIDAD
             if total_kits > 0:
                 return 'EXTREMA VULNERABILIDAD'
             
-            # Si llegó aquí, no tenía evento, no cumplió ninguna regla de inferencia
-            # y no tenía kits, ni materiales, o solo tenía materiales pero no Kits/Chapas específicas.
-            # En el script original, el valor final para estos casos sin evento/insumos es 'EXTREMA VULNERABILIDAD'.
-            # Sin embargo, la lógica de negocio exige que si no hay insumos se elimine.
-            # Aquí lo marcamos como 'SIN_INSUMOS' para el paso de eliminación final.
+            # Si no tiene insumos, marcamos como sin insumos
             if total_insumos == 0:
                 return 'SIN_INSUMOS'
 
+            # Por defecto, vulnerabilidad extrema
             return 'EXTREMA VULNERABILIDAD'
 
         return evento
 
     def run_complete_correction_pipeline(self, df):
-        """Ejecuta todo el pipeline de corrección sobre un DataFrame.
-
-        Pasos principales:
-        1) Normaliza nombres de columnas.
-        2) Estandariza departamentos y eventos.
-        3) Infere eventos a partir de insumos y limpia registros inválidos.
-        4) Genera features básicos y asegura el esquema final.
+        """Ejecuta todo el proceso de limpieza y transformación.
+        
+        Esta es la función principal que prepara los datos para el Data Warehouse.
+        Sigue un flujo específico para garantizar que los datos estén listos
+        para ser cargados en las tablas dimensionales.
         """
-        print("🎯 Aplicando estandarización robusta de DEPARTAMENTO y EVENTO...")
+        print("🎯 Aplicando estandarización robusta de DEPARTAMENTO, DISTRITO, LOCALIDAD y EVENTO...")
 
-        # Conteo inicial para diagnóstico
+        # Medimos cuántos registros tenemos al inicio
         registros_iniciales = len(df)
         print(f"  Registros iniciales: {registros_iniciales}")
 
-        # Normalizar nombres de columnas a MAYÚSCULAS con guiones bajos
+        # Normalizamos nombres de columnas para consistencia
         df.columns = [col.upper().replace(' ', '_') for col in df.columns]
 
-        # 1. Normalizar ubicaciones usando los diccionarios (LOCALIDAD/DISTRITO/DEPARTAMENTO)
+        # 1. Normalizamos todas las ubicaciones (¡ahora mejorada con JSON!)
         df = self.normalize_locations(df)
 
-        # 2. Estandarizar departamentos (ahora que los valores están en las columnas correctas)
-        if 'DEPARTAMENTO' in df.columns:
-            df['DEPARTAMENTO'] = df['DEPARTAMENTO'].apply(self.estandarizar_departamento_robusto)
-
-        # 2. Estandarizar eventos (antes de la inferencia)
+        # 2. Estandarizamos eventos (antes de inferir)
         if 'EVENTO' in df.columns:
             df['EVENTO'] = df['EVENTO'].apply(self.estandarizar_evento_robusto)
-            # Mostrar distribución inicial de eventos para diagnóstico
             try:
                 print("  Distribución EVENTO (pre-inferencia):")
                 print(df['EVENTO'].value_counts(dropna=False).to_string())
             except Exception:
                 pass
 
-        # 3. Inferir eventos y limpiar filas según reglas de insumos
+        # 3. Inferimos eventos cuando no están especificados
         print("🔍 Aplicando inferencia de eventos basada en recursos...")
         eventos_inferidos = 0
         
-    # Preparar columnas numéricas temporales para evitar parseos repetidos
-        
-    # Lista de columnas de insumos que se usarán en la inferencia
+        # Preparamos columnas temporales para cálculos eficientes
         insumos_cols_map = {
             'KIT_A': 'KIT_A', 'KIT_B': 'KIT_B',
             'CHAPA_FIBROCEMENTO': 'CHAPA_FIBROCEMENTO', 'CHAPA_ZINC': 'CHAPA_ZINC',
@@ -842,28 +1034,23 @@ class DataCleaner:
             'TERCIADAS': 'TERCIADAS', 'PUNTALES': 'PUNTALES', 'CARPAS_PLASTICAS': 'CARPAS_PLASTICAS'
         }
         
-        # Mapear las columnas originales a los nombres estandarizados
+        # Mapeamos columnas originales a versiones temporales limpias
         temp_col_map = {}
         for final_col, _ in insumos_cols_map.items():
-            # Buscar la columna en las columnas del DF
             found_col = next((col for col in df.columns if col == final_col), None)
             if found_col:
                 df[f'{final_col}_TEMP'] = df[found_col].apply(self.limpiar_numero)
                 temp_col_map[final_col] = f'{final_col}_TEMP'
             else:
-                # Si no existe, crearla como 0 para el cálculo
                 df[f'{final_col}_TEMP'] = 0
                 temp_col_map[final_col] = f'{final_col}_TEMP'
 
-
-        # Re-iterar por fila aplicando la lógica de inferencia (usa las columnas _TEMP)
+        # Aplicamos inferencia a cada registro
         for idx, row in df.iterrows():
-            # Construir un dict temporal con las columnas clave para el post-procesamiento
             temp_row = row.to_dict()
             for final_col, temp_col in temp_col_map.items():
-                temp_row[final_col.replace('_', ' ')] = row[temp_col] # Necesario para la función
+                temp_row[final_col.replace('_', ' ')] = row[temp_col]
 
-            # Pasar la fila con las columnas limpias a la función
             evento_original = row['EVENTO']
             evento_inferido = self.post_process_eventos_with_aids(temp_row)
 
@@ -878,28 +1065,28 @@ class DataCleaner:
         except Exception:
             pass
         
-        # Eliminar columnas temporales
+        # Limpiamos columnas temporales
         cols_to_drop = [f'{col}_TEMP' for col in insumos_cols_map.keys() if f'{col}_TEMP' in df.columns]
         df = df.drop(columns=cols_to_drop, errors='ignore')
 
-        # 4. Eliminar registros marcados (preposicionamiento) y aquellos sin insumos
+        # 4. Filtramos registros que no deben ir al Data Warehouse
         registros_antes = len(df)
         print(f"  Registros antes de eliminación: {registros_antes}")
 
-        # Realizar la limpieza de números en las columnas de insumos para el cálculo total
+        # Limpiamos números en columnas de insumos
         for col in insumos_cols_map.keys():
             df[col] = df.get(col, pd.Series([0] * len(df), index=df.index)).apply(self.limpiar_numero)
 
-        # Calcular el total de insumos
+        # Calculamos total de insumos por registro
         insumo_cols = list(insumos_cols_map.keys())
         df['TOTAL_INSUMOS'] = df[insumo_cols].sum(axis=1)
 
-        # 4a. Eliminar ELIMINAR_REGISTRO (Preposicionamiento)
+        # 4a. Eliminamos registros de preposicionamiento
         registros_eliminados_prepos = int((df['EVENTO'] == 'ELIMINAR_REGISTRO').sum())
         df_limpio = df[df['EVENTO'] != 'ELIMINAR_REGISTRO'].copy()
         print(f"  Registros marcados ELIMINAR_REGISTRO: {registros_eliminados_prepos}")
 
-        # 4b. Eliminar registros sin insumos
+        # 4b. Eliminamos registros sin insumos
         registros_sin_insumos = int((df_limpio['TOTAL_INSUMOS'] <= 0).sum()) if 'TOTAL_INSUMOS' in df_limpio.columns else 0
         df_limpio = df_limpio[df_limpio['TOTAL_INSUMOS'] > 0]
         registros_eliminados_cero = registros_sin_insumos
@@ -911,42 +1098,40 @@ class DataCleaner:
         print(f"  Registros eliminados (Sin insumos): {registros_eliminados_cero:,}")
         print(f"  Registros restantes: {len(df):,}")
 
-        # 5. Generar columnas derivadas (AÑO, MES, ORDEN_DEPARTAMENTO, ...)
+        # 5. Creamos características adicionales para análisis
         df = self.feature_engineering_basico(df)
 
-        # 6. Asegurar esquema y tipos para la carga en el DW
+        # 6. Aseguramos el formato final para el Data Warehouse
         df = self.estandarizacion_final_columnas(df)
 
         return df
 
-    # ... (feature_engineering_basico, estandarizacion_final_columnas y verificacion_final se mantienen iguales)
     def feature_engineering_basico(self, df):
-        """Feature engineering básico (Alineado con tu archivo original)"""
-        # print("⚙️ Aplicando feature engineering...")
-
-        # Buscar la columna de fecha (la primera que contenga 'FECHA')
+        """Crea características adicionales que facilitan el análisis.
+        
+        Estas características nuevas ayudan a hacer agrupamientos y filtros
+        en los dashboards y reportes del Data Warehouse.
+        """
+        # Buscamos la columna de fecha (puede tener diferentes nombres)
         fecha_cols = [col for col in df.columns if 'FECHA' in col.upper()]
         if fecha_cols:
             col_fecha = fecha_cols[0]
 
-            # Intento 1: parseo directo con inferencia y dayfirst (común en latam)
+            # Intentamos parsear las fechas de manera flexible
             df[col_fecha] = pd.to_datetime(df[col_fecha], errors='coerce', dayfirst=True, infer_datetime_format=True)
 
-            # Si quedan valores inválidos, intentamos heurísticas adicionales
+            # Si hay fechas que no pudimos parsear, intentamos estrategias alternativas
             n_invalid_fecha = int(df[col_fecha].isna().sum())
             if n_invalid_fecha > 0:
                 print(f"  Nota: {n_invalid_fecha} filas inicialmente no parsearon como fecha. Aplicando heurísticas de recuperación...")
 
-                # Heurística A: detectar números tipo Excel serial (valores enteros grandes)
+                # Estrategia A: Detectar números de Excel (fechas como números seriales)
                 def try_excel_serial(val):
                     try:
                         if pd.isna(val):
                             return None
-                        # Si es numérico y razonable como serial de Excel
                         if isinstance(val, (int, float)) and val > 1000:
-                            # Excel's epoch (for Windows) -> 1899-12-30
                             return (pd.to_datetime('1899-12-30') + pd.to_timedelta(int(val), unit='D'))
-                        # También aceptar strings que sean dígitos
                         if isinstance(val, str) and re.fullmatch(r"\d+", val.strip()):
                             iv = int(val.strip())
                             if iv > 1000:
@@ -955,7 +1140,6 @@ class DataCleaner:
                         return None
                     return None
 
-                # Aplicar heurística de serials donde la fecha sea NaT
                 mask_nat = df[col_fecha].isna()
                 if mask_nat.any():
                     recovered = 0
@@ -968,7 +1152,7 @@ class DataCleaner:
                     if recovered > 0:
                         print(f"    Recuperadas {recovered} fechas desde seriales de Excel.")
 
-                # Heurística B: intentar construir fecha desde columnas AÑO/ANO/YEAR y MES/MONTH
+                # Estrategia B: Construir fecha desde columnas de año y mes separadas
                 mask_nat = df[col_fecha].isna()
                 year_cols = [c for c in df.columns if c.upper() in ('AÑO', 'ANO', 'ANIO', 'YEAR')]
                 month_cols = [c for c in df.columns if c.upper() in ('MES', 'MONTH', 'MES_NOMBRE')]
@@ -986,49 +1170,49 @@ class DataCleaner:
                     if recovered_ym > 0:
                         print(f"    Reconstruidas {recovered_ym} fechas a partir de columnas AÑO/MES.")
 
-                # Actualizar conteo de inválidos tras heurísticas
+                # Reportamos cuántas fechas pudimos recuperar
                 n_invalid_fecha_after = int(df[col_fecha].isna().sum())
                 n_recovered_total = n_invalid_fecha - n_invalid_fecha_after
                 if n_recovered_total > 0:
                     print(f"  Heurísticas recuperaron {n_recovered_total} fechas. {n_invalid_fecha_after} siguen inválidas.")
 
-                # Si aún quedan muchas fechas inválidas, mostrar ejemplos para diagnóstico
+                # Mostramos ejemplos de fechas que no pudimos parsear
                 if n_invalid_fecha_after > 0:
                     sample_invalid = df[df[col_fecha].isna()].head(10)
                     print("  Ejemplos de valores de FECHA no parseados (primeros 10):")
                     for i, r in sample_invalid.iterrows():
                         print(f"    idx={i} valor_original={repr(r.get(col_fecha))}")
 
-            # Después de todas las estrategias, eliminar filas sin fecha válida
+            # Eliminamos filas sin fecha válida (no se pueden analizar temporalmente)
             final_invalid = int(df[col_fecha].isna().sum())
             if final_invalid > 0:
                 print(f"  Advertencia: {final_invalid} filas siguen sin FECHA válida y serán descartadas antes de la carga.")
                 df = df[df[col_fecha].notna()].copy()
 
-            # Generar columnas AÑO y MES desde la fecha ya saneada
+            # Creamos columnas de año y mes para agrupamientos
             df['AÑO'] = df[col_fecha].dt.year
             df['MES'] = df[col_fecha].dt.month
 
-            # Detectar fechas con años no realistas (por ejemplo 1900) y descartarlas
+            # Filtramos fechas con años no realistas
             mask_invalid_year = df['AÑO'] <= 1900
             n_invalid_years = int(mask_invalid_year.sum())
             if n_invalid_years > 0:
                 print(f"  Advertencia: {n_invalid_years} filas tienen AÑO <= 1900 y serán descartadas (fechas inválidas).")
                 df = df[~mask_invalid_year].copy()
 
-        # Agregar orden de departamento
+        # Agregamos orden de departamento para visualizaciones consistentes
         if 'DEPARTAMENTO' in df.columns:
-            # Asegura que solo los 18 departamentos válidos tengan orden
             df['ORDEN_DEPARTAMENTO'] = df['DEPARTAMENTO'].map(self.departamento_orden).fillna(0).astype(int)
 
         return df
 
     def estandarizacion_final_columnas(self, df):
+        """Asegura que los datos tengan el formato exacto que espera el Data Warehouse.
+        
+        Esta función garantiza que todas las columnas necesarias estén presentes
+        y en el formato correcto, listas para ser cargadas en las tablas del DW.
         """
-        Asegura que solo las columnas necesarias para el DW estén presentes
-        y con el nombre y tipo correcto.
-        """
-        # Columnas finales esperadas
+        # Definimos exactamente qué columnas y formatos espera el Data Warehouse
         columnas_finales = {
             'FECHA': 'datetime64[ns]',
             'LOCALIDAD': 'object',
@@ -1049,18 +1233,18 @@ class DataCleaner:
             'ORDEN_DEPARTAMENTO': 'int64'
         }
 
+        # Construimos el DataFrame final con todas las columnas esperadas
         df_final = pd.DataFrame()
         for col, dtype in columnas_finales.items():
-            # Crear la columna si no existe (con valor 0 o SIN ESPECIFICAR)
+            # Si la columna no existe, la creamos con valores por defecto
             if col not in df.columns:
                 if dtype in ['int64', 'float64']:
                     df_final[col] = 0
                 else:
                     df_final[col] = 'SIN ESPECIFICAR'
             else:
-                # Copiar y limpiar/convertir
+                # Si existe, la copiamos y aplicamos la limpieza según el tipo
                 if dtype in ['int64', 'float64']:
-                    # Limpieza explícita para asegurar que sean números
                     df_final[col] = df[col].apply(self.limpiar_numero)
                 elif dtype == 'object':
                     df_final[col] = df[col].apply(self.limpiar_texto)
@@ -1070,16 +1254,17 @@ class DataCleaner:
         return df_final.astype(columnas_finales, errors='ignore')
 
     def verificacion_final(self, df):
-        """Verificación final de la estandarización"""
+        """Revisa que todo esté correcto antes de enviar los datos al Data Warehouse.
+        
+        Hace una última verificación para asegurar que los datos estén limpios
+        y consistentes, listos para ser usados en análisis y reportes.
+        """
         print("\n🔍 VERIFICACIÓN FINAL:")
 
+        # Verificamos departamentos
         if 'DEPARTAMENTO' in df.columns:
             deptos_finales = df['DEPARTAMENTO'].unique()
             deptos_esperados = set(self.departamento_orden.keys())
-            deptos_extra = set(deptos_finales) - deptos_esperados
-            
-            # Quitar 'SIN ESPECIFICAR' y 'CENTRAL' si están presentes en deptos_finales y no en esperados
-            deptos_finales_limpios = {d for d in deptos_finales if d in deptos_esperados}
             deptos_extra = set(deptos_finales) - deptos_esperados
             
             print(f"✅ DEPARTAMENTOS FINALES: {len(deptos_finales)}")
@@ -1090,11 +1275,32 @@ class DataCleaner:
             else:
                 print("🎉 ¡Todos los departamentos están correctamente estandarizados o son esperados!")
 
+        # Verificamos distritos
+        if 'DISTRITO' in df.columns:
+            distritos_finales = df['DISTRITO'].unique()
+            distritos_validos = len([d for d in distritos_finales if d in self.todos_distritos_validos])
+            print(f"✅ DISTRITOS FINALES: {len(distritos_finales)}")
+            print(f"📋 Distritos válidos: {distritos_validos}/{len(distritos_finales)}")
+            
+            # Mostramos distritos no válidos para investigación
+            distritos_no_validos = [d for d in distritos_finales if d not in self.todos_distritos_validos and d != 'SIN ESPECIFICAR']
+            if distritos_no_validos:
+                print(f"❌ DISTRITOS NO VÁLIDOS: {distritos_no_validos}")
+
+        # Verificamos localidades
+        if 'LOCALIDAD' in df.columns:
+            localidades_finales = df['LOCALIDAD'].value_counts()
+            print(f"✅ LOCALIDADES FINALES: {len(localidades_finales)}")
+            print("📊 Top 10 localidades más comunes:")
+            for localidad, count in localidades_finales.head(10).items():
+                print(f"  - {localidad}: {count}")
+
+        # Verificamos eventos
         if 'EVENTO' in df.columns:
             eventos_finales = df['EVENTO'].value_counts()
-            print(f"\n✅ EVENTOS FINALES: {len(eventos_finales)}")
+            print(f"✅ EVENTOS FINALES: {len(eventos_finales)}")
             print("📊 Distribución Top 10:")
             for evento, count in eventos_finales.head(10).items():
                 print(f"  - {evento}: {count}")
 
-        return df # Devuelve el DF para encadenamiento si es necesario
+        return df

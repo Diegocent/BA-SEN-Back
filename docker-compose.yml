@@ -6,16 +6,18 @@ services:
       context: .
     container_name: backend
     ports:
-      - "8000:8000"
+      - "5088:8000"
     volumes:
       - .:/app
     environment:
       - PYTHONDONTWRITEBYTECODE=1
       - PYTHONUNBUFFERED=1
+      # Hosts permitidos para Django (sin puerto). Ajusta según tu IP/dominios.
+      - DJANGO_ALLOWED_HOSTS=161.35.53.140,localhost,127.0.0.1
 
   frontend:
     build:
-      context: ../businessAnalitycs
+      context: ../BA-SEN-Front
     container_name: frontend
     ports:
       - "3227:80"

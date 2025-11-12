@@ -28,8 +28,14 @@ SECRET_KEY = os.environ.get('SECRET_KEY', 'tu_clave_secreta_aqui')
 # DEBUG desde ENV (string 'True'/'False'), por defecto True en dev
 DEBUG = os.environ.get('DEBUG', 'True').lower() in ['1', 'true', 'yes']
 
+<<<<<<< HEAD
 # Hosts permitidos (coma-separados en ENV) o vacío
 ALLOWED_HOSTS = [h.strip() for h in os.environ.get('ALLOWED_HOSTS', '').split(',') if h.strip()]
+=======
+# ALLOWED_HOSTS: leer desde la variable de entorno DJANGO_ALLOWED_HOSTS
+_hosts = os.environ.get('DJANGO_ALLOWED_HOSTS', '161.35.53.140,127.0.0.1,localhost')
+ALLOWED_HOSTS = [h.strip() for h in _hosts.split(',') if h.strip()]
+>>>>>>> main
 
 
 # Application definition
@@ -62,6 +68,8 @@ CORS_ALLOWED_ORIGINS = [
     "http://192.168.100.101:5173",
     "http://localhost:5173",
     "http://localhost:3227",
+    "http://161.35.53.140:3227",
+    "http://161.35.53.140",
 ]
 
 ROOT_URLCONF = 'businessAnalitycsBack.urls'
