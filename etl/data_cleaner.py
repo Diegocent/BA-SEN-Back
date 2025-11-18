@@ -780,14 +780,12 @@ class DataCleaner:
         # ESTRATEGIA 2: Búsqueda por similitud en el distrito actual
         correccion_local = self._buscar_localidad_en_json(distrito_estandarizado, localidad_limpia, umbral=0.85)
         if correccion_local:
-            print(f"    🔄 Corrección localidad (mismo distrito): '{localidad_limpia}' → '{correccion_local}'")
             return correccion_local
 
         # ESTRATEGIA 3: Búsqueda global en todos los distritos
         if localidad_limpia not in ['', 'SIN ESPECIFICAR'] and len(localidad_limpia) > 3:
             correccion_global, distrito_correcto = self._buscar_localidad_en_todos_distritos(localidad_limpia, umbral=0.8)
             if correccion_global:
-                print(f"    ⚠️  Localidad '{localidad_limpia}' corregida a '{correccion_global}' (pertenece a distrito '{distrito_correcto}')")
                 return correccion_global
 
         # ESTRATEGIA 4: Reglas heurísticas (fallback)
@@ -891,7 +889,6 @@ class DataCleaner:
                 if departamento_actual != departamento_correcto:
                     df.at[idx, 'DEPARTAMENTO'] = departamento_correcto
                     cambios += 1
-                    print(f"    🔄 Corrección: Distrito '{distrito_actual}' → Departamento '{departamento_correcto}'")
 
         # 3. Detectamos y corregimos distritos en el campo de localidad
         for idx, row in df.iterrows():
@@ -1018,39 +1015,361 @@ class DataCleaner:
         loc_col = next((c for c in df.columns if 'LOCALID' in c.upper()), None)
 
         try:
-            if dept_col is not None:
-                dept_counts = df[dept_col].fillna('SIN ESPECIFICAR').astype(str).value_counts(dropna=False)
-                print(f"  Departamentos iniciales: {len(dept_counts)}")
+
+            # Mostrar distribución inicial por AÑO (si hay columna de fecha)
+            date_col = next((c for c in df.columns if 'FECHA' in c.upper()), None)
+            if date_col is not None:
                 try:
+                    parsed_dates = pd.to_datetime(df[date_col], errors='coerce', dayfirst=True, infer_datetime_format=True)
+                    year_series = parsed_dates.dt.year.dropna().astype(int)
+                    year_counts = year_series.value_counts().sort_index()
+                    total_years = int(year_counts.sum()) if len(year_counts) > 0 else 0
+                    if total_years > 0:
+                        year_counts = year_counts[year_counts.index.map(lambda x: 2018 <= int(x) <= 2023)]
+                        if year_counts.sum() == 0:
+                            print("\nDistribución por año: No se encontraron años válidos en el rango 2018-2023")
+                        else:
+                            print("\nDistribución por año:")
+                            for y, cnt in year_counts.items():
+                                # Porcentaje relativo al total de registros iniciales
+                                pct = cnt / registros_iniciales * 100 if registros_iniciales > 0 else 0
+                                print(f"- {int(y)}: {int(cnt):,} registros ({pct:.1f}%)")
+                    else:
+                        print("Distribución por año: No se encontraron años válidos")
+                except Exception:
+                    print("⚠️ No se pudo parsear la columna de FECHA para obtener años.")
+
+            # Evaluación de completitud por columna
+            try:
+                print("\nSe evaluó el porcentaje de valores faltantes (nulos o vacíos) por columna:")
+                cols_of_interest = ['FECHA', 'DEPARTAMENTO', 'DISTRITO', 'LOCALIDAD', 'EVENTO']
+                mapped_cols = []
+                for key in cols_of_interest:
+                    col = next((c for c in df.columns if key in c.upper()), None)
+                    if col:
+                        mapped_cols.append((key, col))
+
+                print(f"{'Campo':<12}{'Valores Completos':>18}{'Valores Faltantes':>20}{'% Completitud':>16}")
+                for label, colname in mapped_cols:
+                    serie = df[colname]
+                    completos_mask = serie.notna() & (serie.astype(str).str.strip() != '')
+                    completos = int(completos_mask.sum())
+                    faltantes = int(registros_iniciales - completos)
+                    pct_comp = completos / registros_iniciales * 100 if registros_iniciales > 0 else 0
+                    print(f"{label:<12}{completos:18,}{faltantes:20,}{pct_comp:16.1f}%")
+            except Exception:
+                print("⚠️ Error calculando completitud por columna (diagnóstico inicial).")
+
+            # Ahora imprimimos los recuentos y ejemplos por entidad (Departamentos, Eventos, Distritos, Localidades)
+            if dept_col is not None:
+                try:
+                    dept_counts = df[dept_col].fillna('SIN ESPECIFICAR').astype(str).value_counts(dropna=False)
+                    print(f"\n  Departamentos iniciales: {len(dept_counts)}")
                     print(f"  Ejemplos: {dept_counts.head(5).to_dict()}")
                 except Exception:
                     pass
 
-            if evento_col is not None:
-                evento_counts = df[evento_col].fillna('SIN ESPECIFICAR').astype(str).value_counts(dropna=False)
-                print(f"  Eventos iniciales: {len(evento_counts)}")
-                try:
-                    print(f"  Ejemplos: {evento_counts.head(5).to_dict()}")
-                except Exception:
-                    pass
-
             if distr_col is not None:
-                distr_counts = df[distr_col].fillna('SIN ESPECIFICAR').astype(str).value_counts(dropna=False)
-                print(f"  Distritos iniciales: {len(distr_counts)}")
                 try:
+                    distr_counts = df[distr_col].fillna('SIN ESPECIFICAR').astype(str).value_counts(dropna=False)
+                    print(f"  Distritos iniciales: {len(distr_counts)}")
                     print(f"  Ejemplos: {distr_counts.head(5).to_dict()}")
                 except Exception:
                     pass
 
             if loc_col is not None:
-                loc_counts = df[loc_col].fillna('SIN ESPECIFICAR').astype(str).value_counts(dropna=False)
-                print(f"  Localidades iniciales: {len(loc_counts)}")
                 try:
+                    loc_counts = df[loc_col].fillna('SIN ESPECIFICAR').astype(str).value_counts(dropna=False)
+                    print(f"  Localidades iniciales: {len(loc_counts)}")
                     print(f"  Ejemplos: {loc_counts.head(5).to_dict()}")
                 except Exception:
                     pass
+
+            if evento_col is not None:
+                try:
+                    evento_counts = df[evento_col].fillna('SIN ESPECIFICAR').astype(str).value_counts(dropna=False)
+                    print(f"  Eventos iniciales: {len(evento_counts)}")
+                    print(f"  Ejemplos: {evento_counts.head(5).to_dict()}")
+                except Exception:
+                    pass
+
         except Exception:
             # No interrumpimos el pipeline por errores al imprimir diagnósticos
+            pass
+
+        # --- Análisis exploratorio inicial de insumos y calidad de datos ---
+        try:
+            # Detectar columnas de insumos por palabras clave
+            insumo_keywords = ['KIT', 'CHAPA', 'COLCHON', 'COLCHONES', 'FRAZ', 'TERCIAD', 'PUNTA', 'CARPA']
+            insumo_cols = [c for c in df.columns if any(k in c.upper() for k in insumo_keywords)]
+
+            # Construir serie de total de insumos por fila (manejo flexible de tipos)
+            if insumo_cols:
+                df_insumos_numeric = df[insumo_cols].apply(lambda s: pd.to_numeric(s, errors='coerce').fillna(0))
+                total_insumos = df_insumos_numeric.sum(axis=1)
+
+                # Estadísticas descriptivas
+                media = total_insumos.mean()
+                mediana = total_insumos.median()
+                std = total_insumos.std()
+                minimo = int(total_insumos.min())
+                maximo = int(total_insumos.max())
+
+                print("\nEstadísticas descriptivas de insumos totales por registro:")
+                print(f"- Media: {media:,.1f} unidades por asistencia")
+                print(f"- Mediana: {int(mediana):,} unidades por asistencia")
+                print(f"- Desviación estándar: {std:,.1f}")
+                print(f"- Mínimo: {minimo:,} unidades")
+                print(f"- Máximo: {maximo:,} unidades")
+
+                # Top 5 registros por total_insumos (usar columnas detectadas para contexto)
+                print("\nAsistencias con cantidades excepcionalmente altas:")
+                print("Top 5 registros por cantidad total de insumos:")
+                top5 = total_insumos.sort_values(ascending=False).head(5)
+                for i, idx in enumerate(top5.index, start=1):
+                    val = int(total_insumos.at[idx])
+                    evento_val = df.at[idx, evento_col] if evento_col in df.columns else 'SIN_EVENTO'
+                    dept_val = df.at[idx, dept_col] if dept_col in df.columns else 'SIN_DEPARTAMENTO'
+                    fecha_raw = df.at[idx, date_col] if date_col in df.columns else None
+                    try:
+                        fecha_fmt = pd.to_datetime(fecha_raw, errors='coerce', dayfirst=True)
+                        fecha_str = fecha_fmt.strftime('%m/%Y') if not pd.isna(fecha_fmt) else str(fecha_raw)
+                    except Exception:
+                        fecha_str = str(fecha_raw)
+                    print(f"{i}. {val:,} unidades (Evento: {evento_val}, Depto: {dept_val}, Fecha: {fecha_str})")
+
+                # Agregado por año (usar parsed dates si están disponibles)
+                try:
+                    if date_col in df.columns:
+                        parsed_dates = pd.to_datetime(df[date_col], errors='coerce', dayfirst=True)
+                        df_year = pd.DataFrame({'year': parsed_dates.dt.year, 'total_insumos': total_insumos})
+                        df_year = df_year[df_year['year'].notna()]
+                        if not df_year.empty:
+                            print("\nExploración Temporal Inicial")
+                            print("Asistencias por año:")
+                            for y in sorted(df_year['year'].unique()):
+                                if 2018 <= int(y) <= 2023:
+                                    subset = df_year[df_year['year'] == y]
+                                    count_year = int(len(subset))
+                                    sum_year = int(subset['total_insumos'].sum())
+                                    print(f"{int(y)}: {count_year:,} asistencias | {sum_year:,} unidades totales distribuidas")
+                except Exception:
+                    pass
+
+                # Métricas de completitud
+                try:
+                    mandatory_cols = [date_col, dept_col, distr_col, evento_col]
+                    mandatory_cols = [c for c in mandatory_cols if c is not None]
+                    mask_all = pd.Series(True, index=df.index)
+                    for c in mandatory_cols:
+                        mask_all &= df[c].notna() & (df[c].astype(str).str.strip() != '')
+                    pct_all_fields = mask_all.sum() / registros_iniciales * 100 if registros_iniciales > 0 else 0
+
+                    mask_date_loc = df[date_col].notna() & ((df[dept_col].notna() & (df[dept_col].astype(str).str.strip() != '')) | (df[distr_col].notna() & (df[distr_col].astype(str).str.strip() != '')))
+                    pct_date_loc = mask_date_loc.sum() / registros_iniciales * 100 if registros_iniciales > 0 else 0
+
+                    pct_insumos_gt0 = (total_insumos > 0).sum() / registros_iniciales * 100 if registros_iniciales > 0 else 0
+
+                    print("\nDimensión: Completitud")
+                    print(f"% de registros con todos los campos obligatorios: {pct_all_fields:.1f}%")
+                    print(f"% de registros con al menos fecha y ubicación: {pct_date_loc:.1f}%")
+                    print(f"% de registros con insumos > 0: {pct_insumos_gt0:.1f}%")
+                except Exception:
+                    pass
+
+                # Métricas de exactitud / consistencia básica
+                try:
+                    dept_variants = len(df[dept_col].fillna('').astype(str).unique()) if dept_col in df.columns else 0
+                    distr_variants = len(df[distr_col].fillna('').astype(str).unique()) if distr_col in df.columns else 0
+                    evento_variants = len(df[evento_col].fillna('').astype(str).unique()) if evento_col in df.columns else 0
+
+                    # valores numéricos fuera de rango: negativos o NaN in insumos
+                    neg_mask = (total_insumos < 0).sum()
+                    pct_neg = neg_mask / registros_iniciales * 100 if registros_iniciales > 0 else 0
+
+                    print("\nDimensión: Exactitud")
+                    print(f"Consistencia de nombres de departamentos: {'MUY BAJA' if dept_variants > len(self.departamento_orden) * 3 else 'BAJA' if dept_variants > len(self.departamento_orden) else 'OK'} ({dept_variants} variantes para {len(self.departamento_orden)} departamentos)")
+                    print(f"Consistencia de nombres de distritos: {'BAJA' if distr_variants > len(self.todos_distritos_validos) else 'OK'} ({distr_variants} variantes para ~{len(self.todos_distritos_validos)} distritos)")
+                    print(f"Consistencia de nombres de eventos: {'MUY BAJA' if evento_variants > 50 else 'OK'} ({evento_variants} variantes)")
+                    print(f"Valores numéricos fuera de rangos lógicos: {'POCOS' if pct_neg < 1 else 'ATENCIÓN'} (<{pct_neg:.1f}%)")
+                except Exception:
+                    pass
+
+                # Consistencia: departamento vs distrito mapping (usa DISTRITOS_POR_DEPARTAMENTO)
+                try:
+                    mismatch_count = 0
+                    mismatches_samples = []
+                    # Consideramos solo filas donde ambos campos están presentes y no vacíos
+                    if dept_col in df.columns and distr_col in df.columns:
+                        mask_both = df[dept_col].notna() & df[distr_col].notna() & (df[dept_col].astype(str).str.strip() != '') & (df[distr_col].astype(str).str.strip() != '')
+                        rows_with_both = int(mask_both.sum())
+                        if rows_with_both > 0:
+                            for idx, row in df.loc[mask_both, [dept_col, distr_col]].iterrows():
+                                d_actual = row.get(distr_col, '')
+                                dept_actual = row.get(dept_col, '')
+                                d_norm = self._norm_str(d_actual)
+                                # buscamos el departamento oficial asignado al distrito (si existe)
+                                mapped_dept = self.distrito_a_departamento_norm.get(d_norm)
+                                if mapped_dept:
+                                    if self._norm_str(dept_actual) != self._norm_str(mapped_dept):
+                                        mismatch_count += 1
+                                        # guardamos una muestra para diagnóstico
+                                        if len(mismatches_samples) < 5:
+                                            mismatches_samples.append((idx, d_actual, dept_actual, mapped_dept))
+                    else:
+                        rows_with_both = 0
+
+                    # Imprimir resumen con dos denominadores: total inicial y filas con ambos campos
+                    pct_mismatch_total = mismatch_count / registros_iniciales * 100 if registros_iniciales > 0 else 0
+                    pct_mismatch_both = (mismatch_count / rows_with_both * 100) if rows_with_both > 0 else 0
+
+                    print("\nDimensión: Consistencia (Departamento <-> Distrito)")
+                    print(f"Inconsistencias detectadas: {mismatch_count:,} casos | {pct_mismatch_total:.1f}% del total inicial | {pct_mismatch_both:.1f}% de filas con ambos campos ({rows_with_both:,} filas)")
+                    if mismatches_samples:
+                        print("  Ejemplos de inconsistencias (índice, distrito_raw, depto_raw, depto_esperado):")
+                        for s in mismatches_samples:
+                            print(f"   - {s[0]}: Distrito='{s[1]}', Depto='{s[2]}' -> Esperado='{s[3]}'")
+                    # Añadimos aquí la regla de fecha como parte de la dimensión de consistencia
+                    try:
+                        if date_col in df.columns:
+                            parsed_dates_local = pd.to_datetime(df[date_col], errors='coerce', dayfirst=True, infer_datetime_format=True)
+                            valid_year_mask_local = (parsed_dates_local.dt.year >= 2018) & (parsed_dates_local.dt.year <= 2023)
+                            fecha_bad_count_local = int((~valid_year_mask_local).sum())
+                            pct_fecha_ok_local = (registros_iniciales - fecha_bad_count_local) / registros_iniciales * 100 if registros_iniciales > 0 else 0
+                            print(f"Fecha debe estar en rango 2018-2023 -> {pct_fecha_ok_local:.1f}% -> {fecha_bad_count_local:,} ({(100-pct_fecha_ok_local):.1f}% incumplen)")
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+
+                    if date_col in df.columns:
+                        parsed = pd.to_datetime(df[date_col], errors='coerce', dayfirst=True, infer_datetime_format=True)
+                        # intentamos recuperar fechas inválidas (serial Excel y AÑO/MES)
+                        def try_excel_serial_local(val):
+                            try:
+                                if pd.isna(val):
+                                    return None
+                                if isinstance(val, (int, float)) and val > 1000:
+                                    return (pd.to_datetime('1899-12-30') + pd.to_timedelta(int(val), unit='D'))
+                                if isinstance(val, str) and re.fullmatch(r"\d+", val.strip()):
+                                    iv = int(val.strip())
+                                    if iv > 1000:
+                                        return (pd.to_datetime('1899-12-30') + pd.to_timedelta(iv, unit='D'))
+                            except Exception:
+                                return None
+                            return None
+
+                        parsed_after = parsed.copy()
+                        mask_nat = parsed_after.isna()
+                        if mask_nat.any():
+                            for idx in df[mask_nat].index:
+                                orig = df.at[idx, date_col]
+                                alt = try_excel_serial_local(orig)
+                                if alt is not None:
+                                    parsed_after.at[idx] = alt
+
+                        # Intentar reconstruir desde AÑO/MES si sigue faltando
+                        mask_nat = parsed_after.isna()
+                        year_cols = [c for c in df.columns if c.upper() in ('AÑO', 'ANO', 'ANIO', 'YEAR')]
+                        month_cols = [c for c in df.columns if c.upper() in ('MES', 'MONTH', 'MES_NOMBRE')]
+                        if mask_nat.any() and year_cols and month_cols:
+                            for idx in df[mask_nat].index:
+                                try:
+                                    y = int(df.at[idx, year_cols[0]])
+                                    m = int(df.at[idx, month_cols[0]])
+                                    if y > 1900 and 1 <= m <= 12:
+                                        parsed_after.at[idx] = pd.Timestamp(year=y, month=m, day=1)
+                                except Exception:
+                                    continue
+                    pass
+
+        except Exception:
+            # no romper el pipeline si hay algún fallo en este bloque analítico
+            pass
+        # --- Dimensión: Validez - usa los valores tal como entran al pipeline ---
+        try:
+            print("\nDimensión: Validez")
+            # 1) Regla: al menos un insumo > 0 (detección por keywords en nombres de columna)
+            insumo_keywords_init = ['KIT', 'CHAPA', 'COLCHON', 'COLCHONES', 'FRAZ', 'TERCIAD', 'PUNTA', 'CARPA']
+            insumo_cols_init = [c for c in df.columns if any(k in c.upper() for k in insumo_keywords_init)]
+            if insumo_cols_init:
+                total_insumos_init = df[insumo_cols_init].apply(lambda s: pd.to_numeric(s, errors='coerce').fillna(0)).sum(axis=1)
+            else:
+                total_insumos_init = pd.Series(0, index=df.index)
+
+            ok_insumos = int((total_insumos_init > 0).sum())
+            fail_insumos = registros_iniciales - ok_insumos
+            pct_ok_insumos = ok_insumos / registros_iniciales * 100 if registros_iniciales > 0 else 0
+
+            # 2) Regla: departamento debe ser uno de los oficiales
+            dept_valid_count = 0
+            dept_official_norm = {self._norm_str(k) for k in self.departamento_orden.keys()}
+            if dept_col in df.columns:
+                # máscara de filas con valor no vacío
+                non_empty_mask = df[dept_col].notna() & (df[dept_col].astype(str).str.strip() != '')
+                # para cada valor no vacío verificamos si su forma normalizada está en la lista oficial
+                try:
+                    dept_norm_series = df.loc[non_empty_mask, dept_col].astype(str).apply(self._norm_str)
+                    dept_valid_count = int(dept_norm_series.isin(dept_official_norm).sum())
+                except Exception:
+                    # fallback conservador: contar 0 válidos si algo falla
+                    dept_valid_count = 0
+            fail_dept = registros_iniciales - dept_valid_count
+            pct_dept_ok = dept_valid_count / registros_iniciales * 100 if registros_iniciales > 0 else 0
+
+            # 3) Regla: fecha debe estar en rango 2018-2023
+            fecha_bad_count = 0
+            if date_col is not None:
+                parsed_init = pd.to_datetime(df[date_col], errors='coerce', dayfirst=True, infer_datetime_format=True)
+                valid_year_mask = (parsed_init.dt.year >= 2018) & (parsed_init.dt.year <= 2023)
+                fecha_bad_count = int((~valid_year_mask).sum())
+            pct_fecha_ok = (registros_iniciales - fecha_bad_count) / registros_iniciales * 100 if registros_iniciales > 0 else 0
+
+            # 4) Regla: evento no puede estar vacío
+            evento_non_empty = 0
+            if evento_col in df.columns:
+                evento_non_empty = int(df[evento_col].notna().astype(bool).sum())
+            fail_evento = registros_iniciales - evento_non_empty
+            pct_evento_ok = evento_non_empty / registros_iniciales * 100 if registros_iniciales > 0 else 0
+
+            # Contexto: primeros 10 registros que NO tienen insumos (TOTAL_INS<=0) en la vista inicial
+            try:
+                cols_show = []
+                if evento_col in df.columns:
+                    cols_show.append(evento_col)
+                if dept_col in df.columns:
+                    cols_show.append(dept_col)
+                if date_col in df.columns:
+                    cols_show.append(date_col)
+
+                # si no detectamos columnas para mostrar, saltamos
+                if cols_show:
+                    no_insumos_mask = total_insumos_init <= 0
+                    if no_insumos_mask.any():
+                        sample_no_insumos = df.loc[no_insumos_mask, cols_show].head(50)
+                        print("\nPrimeros 10 registros SIN insumos (campos: Evento, Departamento, Fecha si existen):")
+                        # imprimimos con índice para rastrear filas originales
+                        try:
+                            print(sample_no_insumos.to_string(index=True))
+                        except Exception:
+                            # fallback sencillo línea a línea
+                            for i, row in sample_no_insumos.iterrows():
+                                vals = [str(row[c]) for c in cols_show]
+                                print(f"- {i}: {' | '.join(vals)}")
+                    else:
+                        print("\nNo se encontraron registros sin insumos en la vista inicial.")
+                else:
+                    print("\nNo hay columnas Evento/Departamento/Fecha detectadas para mostrar contexto de registros sin insumos.")
+            except Exception:
+                pass
+
+            # Imprimir resumen compacto (una línea por regla, formato: Regla -> %cumplimiento -> N (X% incumplen))
+            print("Regla de Negocio | Cumplimiento | Registros Incumpliendo")
+            print(f"Al menos un insumo debe ser > 0 -> {pct_ok_insumos:.1f}% -> {fail_insumos:,} ({(100-pct_ok_insumos):.1f}% incumplen)")
+            print(f"Departamento debe ser uno de los oficiales -> {pct_dept_ok:.1f}% -> {fail_dept:,} ({(100-pct_dept_ok):.1f}% incumplen)")
+            print(f"Fecha debe estar en rango 2018-2023 -> {pct_fecha_ok:.1f}% -> {fecha_bad_count:,} ({(100-pct_fecha_ok):.1f}% incumplen)")
+            print(f"Evento no puede estar vacío -> {pct_evento_ok:.1f}% -> {fail_evento:,} ({(100-pct_evento_ok):.1f}% incumplen)")
+        except Exception:
             pass
 
         # Normalizamos nombres de columnas para consistencia
@@ -1062,11 +1381,6 @@ class DataCleaner:
         # 2. Estandarizamos eventos (antes de inferir)
         if 'EVENTO' in df.columns:
             df['EVENTO'] = df['EVENTO'].apply(self.estandarizar_evento_robusto)
-            try:
-                print("  Distribución EVENTO (pre-inferencia):")
-                print(df['EVENTO'].value_counts(dropna=False).to_string())
-            except Exception:
-                pass
 
         # 3. Inferimos eventos cuando no están especificados
         print("🔍 Aplicando inferencia de eventos basada en recursos...")
@@ -1105,11 +1419,7 @@ class DataCleaner:
                 df.at[idx, 'EVENTO'] = evento_inferido
 
         print(f"  Eventos inferidos/ajustados: {eventos_inferidos}")
-        try:
-            print("  Distribución EVENTO (post-inferencia):")
-            print(df['EVENTO'].value_counts(dropna=False).to_string())
-        except Exception:
-            pass
+        # Distribution prints for EVENTO (pre/post inference) suppressed to reduce noisy console output
         
         # Limpiamos columnas temporales
         cols_to_drop = [f'{col}_TEMP' for col in insumos_cols_map.keys() if f'{col}_TEMP' in df.columns]
