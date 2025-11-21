@@ -49,8 +49,8 @@ class DataCleaner:
             'CONCEPCIÓN': 1, 'SAN PEDRO': 2, 'CORDILLERA': 3, 'GUAIRÁ': 4,
             'CAAGUAZÚ': 5, 'CAAZAPÁ': 6, 'ITAPÚA': 7, 'MISIONES': 8,
             'PARAGUARÍ': 9, 'ALTO PARANÁ': 10, 'CENTRAL': 11, 'ÑEEMBUCÚ': 12,
-            'AMAMBAY': 13, 'CANINDEYÚ': 14, 'PDTE. HAYES': 15, 'BOQUERON': 16,
-            'ALTO PARAGUAY': 17, 'CAPITAL': 18
+            'AMAMBAY': 13, 'CANINDEYÚ': 14, 'PDTE. HAYES': 15, 
+            'ALTO PARAGUAY': 16,'BOQUERON': 17, 'CAPITAL': 18
         }
 
         # Diccionario para corregir nombres de departamentos
@@ -968,23 +968,23 @@ class DataCleaner:
             if total_kits < 10 and total_kits > 0 and materiales > 0:
                 return 'INCENDIO'
 
-            # REGLA 4: En capital, solo kits → INUNDACION
+            # REGLA 3: En capital, solo kits → INUNDACION
             if departamento == 'CAPITAL' and total_kits > 0 and materiales == 0:
                 return 'INUNDACION'
 
-            # REGLA 5: Solo chapa zinc → TORMENTA SEVERA
+            # REGLA 4: Solo chapa zinc → TORMENTA SEVERA
             if chapa_zinc > 0 and total_kits == 0 and chapa_fibrocemento == 0:
                 return 'TORMENTA SEVERA'
 
-            # REGLA 6: Solo chapa fibrocemento → INUNDACION
+            # REGLA 5: Solo chapa fibrocemento → INUNDACION
             if chapa_fibrocemento > 0 and total_kits == 0 and chapa_zinc == 0:
                 return 'INUNDACION'
 
-            # REGLA 7: Si hay kits → EXTREMA VULNERABILIDAD
+            # REGLA 6: Si hay kits → EXTREMA VULNERABILIDAD
             if total_kits > 0:
                 return 'EXTREMA VULNERABILIDAD'
             
-            # Si no tiene insumos, marcamos como sin insumos
+            # REGLA 7: Si no tiene insumos, marcamos como sin insumos
             if total_insumos == 0:
                 return 'SIN_INSUMOS'
 
