@@ -14,7 +14,10 @@ SECRET_KEY = 'tu_clave_secreta_aqui'
 DEBUG = True
 
 # ALLOWED_HOSTS: leer desde la variable de entorno DJANGO_ALLOWED_HOSTS
-_hosts = os.environ.get('DJANGO_ALLOWED_HOSTS', '161.35.53.140,127.0.0.1,localhost')
+_hosts = os.environ.get(
+			'DJANGO_ALLOWED_HOSTS',  
+			'161.35.53.140,127.0.0.1,sen.yvagacore.com,sen-api.yvagacore.com,192.168.100.236'
+)
 ALLOWED_HOSTS = [h.strip() for h in _hosts.split(',') if h.strip()]
 
 
@@ -43,13 +46,34 @@ MIDDLEWARE = [
 ]
 # --- Configuración de CORS ---
 CORS_ALLOWED_ORIGINS = [
+    "https://sen.yvagacore.com",
+    "https://sen-api.yvagacore.com",
     "http://192.168.100.101",
     "http://192.168.100.101:3000",
     "http://192.168.100.101:5173",
-    "http://localhost:5173",
-    "http://localhost:3227",
     "http://161.35.53.140:3227",
     "http://161.35.53.140",
+]
+
+CSRF_TRUSTED_ORIGINS = [
+    "https://sen.yvagacore.com",
+    "https://sen-api.yvagacore.com",
+]
+
+# Permitir también credenciales (cookies, auth, etc.)
+CORS_ALLOW_CREDENTIALS = True
+
+# Si querés permitir headers personalizados:
+CORS_ALLOW_HEADERS = [
+    "accept",
+    "accept-encoding",
+    "authorization",
+    "content-type",
+    "dnt",
+    "origin",
+    "user-agent",
+    "x-csrftoken",
+    "x-requested-with",
 ]
 
 ROOT_URLCONF = 'businessAnalitycsBack.urls'
